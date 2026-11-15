@@ -1,10 +1,30 @@
 # Settings
 
+## Order
+
 | Setting | What it does |
 |---|---|
-| **Shuffle** | Random order. Nothing comes back until everything has been shown once. Off: in order, folder by folder, by name. |
+| **Random wallpaper order** | Nothing comes back until everything has been shown once. Off: in order. |
 | **Include subfolders** | Also uses what is in folders inside the added folders. Folders whose name starts with a dot are skipped. |
-| **Videos: Loop** | The video plays over and over while you can see it, and pauses when you can't. |
-| **Videos: Play once** | The video plays from the start each time the wallpaper comes into view (turning the screen on, going back to the home screen), then stops on its last frame. |
+| **Automatically rescan added folders** | Off, or every 1–24 hours, so new files turn up on their own. |
 
-The wallpaper changes on every lock (each time the screen goes off), whether you lock with the button or it times out.
+## Image position
+
+| Setting | What it does |
+|---|---|
+| **Fill** | Fills the screen; the edges that don't fit are cut off. |
+| **Fit** | All of it shows, with black bars. |
+| **Stretch** | Stretched to the shape of the screen. |
+| **None** | Shown at its own size, in the middle. |
+| **Scroll with the home screen** | Wide pictures move as you swipe between home screen pages. |
+| **Full resolution** | Loads pictures at full size instead of the screen's: sharper when cropped, uses more memory. |
+| **Darken wallpaper** | 0–80 %, so the icons and text on the home screen are easier to read. |
+
+## Videos
+
+- **Loop**: plays over and over while you can see it, and pauses when you can't.
+- **Play once**: plays from the start each time the wallpaper comes into view, then stops on its last frame.
+
+## Lockscreen
+
+**Pick a lock screen picture** keeps one fixed picture on the lock screen while the home screen rotates. **Same as home screen** puts it back.
