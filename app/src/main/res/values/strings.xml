@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">WallpaperChanger</string>
+    <string name="wallpaper_description">A new picture or video each time you lock the phone</string>
+</resources>

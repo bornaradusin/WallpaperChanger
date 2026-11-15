@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shown in Android's wallpaper picker; the cog opens the app -->
+<wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/wallpaper_description"
+    android:settingsActivity="io.github.bornaradusin.wallpaperchanger.MainActivity"
+    android:thumbnail="@drawable/ic_launcher_foreground"
+    android:showMetadataInPreview="false" />

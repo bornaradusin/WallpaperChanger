@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A picture frame with mountains, and a play mark for videos -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M30,32h48a4,4 0,0 1,4 4v36a4,4 0,0 1,-4 4h-48a4,4 0,0 1,-4 -4v-36a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#7FB2FF"
+        android:pathData="M30,36h48v36h-48z" />
+    <path android:fillColor="#FFD166"
+        android:pathData="M68,46m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0" />
+    <path android:fillColor="#2F6E4F"
+        android:pathData="M30,72l16,-20l10,12l6,-6l16,14z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M44,44l12,7l-12,7z" />
+</vector>
