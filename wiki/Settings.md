@@ -25,6 +25,6 @@
 - **Loop**: plays over and over while you can see it, and pauses when you can't.
 - **Play once**: plays from the start each time the wallpaper comes into view, then stops on its last frame.
 
-## Lockscreen
+## Lock screen
 
-**Pick a lock screen picture** keeps one fixed picture on the lock screen while the home screen rotates. **Same as home screen** puts it back.
+See [[Lock screen]].
