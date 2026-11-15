@@ -14,6 +14,7 @@ on:
   push:
     paths-ignore:
       - "wiki/**"
+      - ".github/screenshots/**"
       - ".github/workflows/wiki.yml"
   workflow_dispatch:
 
