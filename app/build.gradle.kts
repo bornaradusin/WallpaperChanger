@@ -16,10 +16,10 @@ android {
 
     defaultConfig {
         applicationId = "io.github.bornaradusin.wallpaperchanger"
-        minSdk = 29
+        minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -78,4 +78,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // The map for place rules (OpenStreetMap, no Google key needed)
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
 }

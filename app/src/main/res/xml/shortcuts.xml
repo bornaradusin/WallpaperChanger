@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_next"
+        android:shortcutId="next"
+        android:shortcutShortLabel="@string/next_wallpaper">
+        <intent
+            android:action="io.github.bornaradusin.wallpaperchanger.NEXT"
+            android:targetClass="io.github.bornaradusin.wallpaperchanger.ShortcutActivity"
+            android:targetPackage="io.github.bornaradusin.wallpaperchanger" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_albums"
+        android:shortcutId="next_album"
+        android:shortcutShortLabel="@string/next_album">
+        <intent
+            android:action="io.github.bornaradusin.wallpaperchanger.NEXT_ALBUM"
+            android:targetClass="io.github.bornaradusin.wallpaperchanger.ShortcutActivity"
+            android:targetPackage="io.github.bornaradusin.wallpaperchanger" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_pause"
+        android:shortcutId="pause"
+        android:shortcutShortLabel="@string/pause_resume">
+        <intent
+            android:action="io.github.bornaradusin.wallpaperchanger.PAUSE"
+            android:targetClass="io.github.bornaradusin.wallpaperchanger.ShortcutActivity"
+            android:targetPackage="io.github.bornaradusin.wallpaperchanger" />
+    </shortcut>
+</shortcuts>
