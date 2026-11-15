@@ -41,9 +41,10 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * The live wallpaper, like Wallpaper Changer: when the screen goes off, the next picture or video
- * is loaded, put up and its colours given to Android while the phone sleeps. Android re-themes the
- * phone then, unseen, and waking and unlocking change nothing, so nothing stutters.
+ * The live wallpaper, like Wallpaper Changer: a second after the screen goes off (once Android's
+ * lock animation is over), the next picture or video is loaded, put up and its colours given to
+ * Android while the phone sleeps. Nothing happens during the animation, and waking and unlocking
+ * change nothing, so nothing stutters.
  *
  * On Android 14 and newer it can be the lock screen's wallpaper separately from the home
  * screen's; each one shows its own rotation when the lock screen has its own.
@@ -54,18 +55,31 @@ class WallService : WallpaperService() {
     private val main = Handler(Looper.getMainLooper())
     private var lastSsid: String? = null
 
+    /** The change after the screen went off, waiting for the lock animation to finish. */
+    private val change = Runnable {
+        app.library.rescanIfDue()
+        app.library.screenOff()
+    }
+
     private val screen = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            // Only the real wallpaper moves things on, not a preview in the wallpaper picker
-            if (engines.none { !it.isPreview }) return
-            // Keep the phone from sleeping fully until the next one is loaded and up
-            runCatching {
-                getSystemService(PowerManager::class.java)
-                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WallpaperChanger:change")
-                    .acquire(10_000L)
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    // Only the real wallpaper moves things on, not a preview in the wallpaper picker
+                    if (engines.none { !it.isPreview }) return
+                    // Keep the phone from sleeping fully until the next one is loaded and up
+                    runCatching {
+                        getSystemService(PowerManager::class.java)
+                            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WallpaperChanger:change")
+                            .acquire(10_000L)
+                    }
+                    // Like Wallpaper Changer: a second later, when Android has finished locking
+                    main.removeCallbacks(change)
+                    main.postDelayed(change, CHANGE_DELAY_MS)
+                }
+                // Back on before it happened: leave it for the next lock
+                Intent.ACTION_SCREEN_ON -> main.removeCallbacks(change)
             }
-            app.library.rescanIfDue()
-            app.library.screenOff()
         }
     }
 
@@ -90,7 +104,10 @@ class WallService : WallpaperService() {
 
     override fun onCreate() {
         super.onCreate()
-        registerReceiver(screen, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        registerReceiver(screen, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        })
         runCatching {
             getSystemService(ConnectivityManager::class.java).registerNetworkCallback(
                 NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), wifi,
@@ -100,6 +117,7 @@ class WallService : WallpaperService() {
     }
 
     override fun onDestroy() {
+        main.removeCallbacks(change)
         runCatching { unregisterReceiver(screen) }
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(wifi) }
         super.onDestroy()
@@ -392,16 +410,27 @@ class WallService : WallpaperService() {
             }
         }.getOrNull()
 
+        /**
+         * The wallpaper's colours, worked out like Wallpaper Changer: from the whole picture, and
+         * with Darken on, its three main colours darkened the same way.
+         */
         private fun colorsOf(bitmap: Bitmap): WallpaperColors? = runCatching {
-            val small = Bitmap.createScaledBitmap(bitmap, 96, (96f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true)
-            WallpaperColors.fromBitmap(small).also { if (small !== bitmap) small.recycle() }
+            dimmed(WallpaperColors.fromBitmap(bitmap))
         }.getOrNull()
+
+        private fun dimmed(c: WallpaperColors): WallpaperColors {
+            val dim = app.library.data.value.settings.darken / 100f
+            if (dim <= 0f) return c
+            val f = 1f - dim
+            fun d(color: android.graphics.Color) = android.graphics.Color.valueOf(color.red() * f, color.green() * f, color.blue() * f)
+            return WallpaperColors(d(c.primaryColor), c.secondaryColor?.let(::d), c.tertiaryColor?.let(::d))
+        }
 
         private fun frameColors(item: Item): WallpaperColors? = runCatching {
             MediaMetadataRetriever().use { r ->
                 r.setDataSource(applicationContext, Uri.parse(item.uri))
-                r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 96, 96)?.let { f ->
-                    WallpaperColors.fromBitmap(f).also { f.recycle() }
+                r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 512, 512)?.let { f ->
+                    dimmed(WallpaperColors.fromBitmap(f)).also { f.recycle() }
                 }
             }
         }.getOrNull()
@@ -409,5 +438,7 @@ class WallService : WallpaperService() {
 
     private companion object {
         const val MAX_TEXTURE = 4096
+        /** How long Wallpaper Changer waits after the screen goes off before changing. */
+        const val CHANGE_DELAY_MS = 1000L
     }
 }
