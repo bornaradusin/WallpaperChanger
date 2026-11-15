@@ -20,6 +20,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.service.wallpaper.WallpaperService
 import android.view.SurfaceHolder
@@ -311,8 +312,21 @@ class WallService : WallpaperService() {
             loadingKey = null
             ready?.release()
             ready = r
-            if (target?.let { key(it) } == k) swap(r)
+            if (target?.let { key(it) } == k) swap(r) else reportEarly(k)
         }
+
+        /**
+         * The next one is ready while the screen is off: tell Android its colours now. Android
+         * re-themes the phone straight away only for colours that come while the screen is on
+         * (that is what freezes the phone for a moment); while it's off, it happens unseen. On
+         * unlock only the picture changes, and the colours are already right.
+         */
+        private fun reportEarly(k: String) {
+            if (upcoming?.let { key(it) } != k || screenOn()) return
+            colorsByKey[k]?.let { c -> main.post { setColors(c) } }
+        }
+
+        private fun screenOn() = getSystemService(PowerManager::class.java).isInteractive
 
         /** Puts a loaded picture or video on screen. Quick: everything slow was done beforehand. */
         private fun swap(r: Ready) {
@@ -347,7 +361,7 @@ class WallService : WallpaperService() {
 
         private fun gotColors(k: String, c: WallpaperColors) {
             colorsByKey[k] = c
-            gl.post { if (shownKey == k) main.post { setColors(c) } }
+            gl.post { if (shownKey == k) main.post { setColors(c) } else reportEarly(k) }
         }
 
         /** Tells Android, and so Material You and the launcher, the new wallpaper's colours. */
