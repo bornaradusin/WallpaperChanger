@@ -46,8 +46,9 @@ import kotlin.math.max
  * Android while the phone sleeps. Nothing happens during the animation, and waking and unlocking
  * change nothing, so nothing stutters.
  *
- * On Android 14 and newer it can be the lock screen's wallpaper separately from the home
- * screen's; each one shows its own rotation when the lock screen has its own.
+ * When the lock screen has its own pictures and videos, the one wallpaper shows the lock screen's
+ * while the phone is locked and the home screen's once unlocked; both are loaded ahead, so the
+ * switch is instant.
  */
 class WallService : WallpaperService() {
 
@@ -174,6 +175,8 @@ class WallService : WallpaperService() {
         }
 
         private val slots = arrayOf(Slot(0), Slot(1))
+        /** The slot that should be on screen; the lock screen's only once it has something loaded. */
+        private var wanted = 0
         /** The slot whose colours Android is told about: always the home screen's. */
         private var colorSlot = 0
 
@@ -186,7 +189,7 @@ class WallService : WallpaperService() {
             flags.value = whichScreen()
             scope.launch {
                 combine(library.data, flags, locked) { d, screen, isLocked ->
-                    val own = d.settings.lockOwn
+                    val own = d.lockHasOwn
                     when {
                         // Set on the lock screen on its own (Android 14+): just the lock screen's
                         screen == Screen.LOCK -> Plan(d.item(Screen.LOCK), null, 0)
@@ -302,9 +305,15 @@ class WallService : WallpaperService() {
         private fun apply(plan: Plan) {
             slots[0].target = plan.home
             slots[1].target = plan.lock
+            wanted = plan.active
+            showWanted()
             if (plan.lock == null) releaseSlot(slots[1])
             slots.forEach { load(it) }
-            renderer.setActive(plan.active)
+        }
+
+        /** Switches to the wanted slot, or stays on the home screen's while the lock screen's loads. */
+        private fun showWanted() {
+            renderer.setActive(if (wanted == 1 && slots[1].shownKey == null) 0 else wanted)
             playOnlyActive(restart = false)
         }
 
@@ -369,6 +378,7 @@ class WallService : WallpaperService() {
                         slot.loadingKey = null
                         slot.shownKey = k
                         c?.let { gotColors(slot, k, it) }
+                        if (slot.index == 1) showWanted()
                     }
                 }
             }
@@ -392,6 +402,7 @@ class WallService : WallpaperService() {
             // Started for its first frame; paused again unless it's the one on screen
             p.start()
             if (!visibleNow || slot.index != renderer.active) p.pause()
+            if (slot.index == 1) showWanted()
         }
 
         private fun gotColors(slot: Slot, k: String, c: WallpaperColors) {
@@ -450,7 +461,7 @@ class WallService : WallpaperService() {
         private fun frameColors(item: Item): WallpaperColors? = runCatching {
             MediaMetadataRetriever().use { r ->
                 r.setDataSource(applicationContext, Uri.parse(item.uri))
-                r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 512, 512)?.let { f ->
+                r.getScaledFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 512, 512)?.let { f ->
                     dimmed(WallpaperColors.fromBitmap(f)).also { f.recycle() }
                 }
             }

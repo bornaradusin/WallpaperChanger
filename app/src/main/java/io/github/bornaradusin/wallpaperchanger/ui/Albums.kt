@@ -76,12 +76,13 @@ fun AlbumsTab(open: (Page) -> Unit) {
             Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     data.currentItem?.let { Thumb(it, Modifier.size(64.dp).clip(RoundedCornerShape(8.dp))) }
-                    if (data.settings.lockOwn) data.lockItem?.let {
+                    if (data.lockHasOwn) data.lockItem?.let {
                         Thumb(it, Modifier.padding(start = 6.dp).size(64.dp).clip(RoundedCornerShape(8.dp)))
                     }
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text(if (data.settings.lockOwn) "Home · Lock screen" else "Showing now", style = MaterialTheme.typography.labelMedium)
+                        Text(if (data.lockHasOwn) "Home · Lock screen" else "Showing now", style = MaterialTheme.typography.labelMedium)
                         Text(data.currentItem?.name ?: "Nothing yet", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (data.lockHasOwn) Text("Lock: " + (data.lockItem?.name ?: "nothing yet"), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                         if (data.settings.paused) Text("Rotation paused", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
                     FilledTonalButton(onClick = { library.next() }, enabled = data.items.size > 1) { Text("Next") }
@@ -130,6 +131,21 @@ fun AlbumsTab(open: (Page) -> Unit) {
             }
         }
         item {
+            // What each screen is using, at a glance
+            fun names(screen: io.github.bornaradusin.wallpaperchanger.Screen) =
+                data.albums.filter { it.id in data.albumsFor(screen) }.joinToString(", ") { it.name }.ifBlank { "nothing" }
+            val homeOn = data.albums.any { it.active }
+            val lockOn = data.albums.any { it.lock }
+            Text(
+                if (data.settings.lockOwn) {
+                    "Home screen: " + names(Screen.HOME) + (if (!homeOn) " (no album switched on for Home, so it uses the lock screen's)" else "") +
+                        "\nLock screen: " + (if (lockOn) names(Screen.LOCK) else "same as the home screen (no album switched on for Lock)")
+                } else {
+                    "Using: " + names(Screen.HOME) + if (!homeOn) " (no album switched on, so all of them)" else ""
+                },
+                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.bodyMedium,
+            )
             Row(Modifier.padding(16.dp)) {
                 OutlinedButton(onClick = { creating = true }) { Text("Add new album") }
             }

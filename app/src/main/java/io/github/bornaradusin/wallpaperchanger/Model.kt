@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
  * screen, when the lock screen has its own rotation.
  */
 @Serializable
-data class Album(val id: String, val name: String, val active: Boolean = true, val lock: Boolean = true)
+data class Album(val id: String, val name: String, val active: Boolean = true, val lock: Boolean = false)
 
 /** The two places a wallpaper shows. */
 enum class Screen { HOME, LOCK }
@@ -118,16 +118,29 @@ data class Data(
 ) {
     val currentItem get() = items.firstOrNull { it.id == current }
 
+    /** The lock screen has albums of its own switched on (otherwise it shows the home screen's). */
+    val lockHasOwn get() = settings.lockOwn && albums.any { it.lock }
+
     /** What's on the lock screen: its own one, or the home screen's. */
-    val lockItem get() = if (settings.lockOwn) items.firstOrNull { it.id == lockCurrent } else currentItem
+    val lockItem get() = if (lockHasOwn) items.firstOrNull { it.id == lockCurrent } ?: currentItem else currentItem
 
     fun item(screen: Screen) = if (screen == Screen.LOCK) lockItem else currentItem
 
     /** What the home screen picks from: its albums (all of them if none is switched on). */
     val pool: List<Item> get() = pool(Screen.HOME)
 
-    fun pool(screen: Screen): List<Item> {
-        val on = albums.filter { if (screen == Screen.LOCK && settings.lockOwn) it.lock else it.active }.map { it.id }.toSet()
-        return if (on.isEmpty()) items else items.filter { it.album in on }
+    /**
+     * What a screen picks from: the albums switched on for it. With the lock screen on its own, a
+     * screen with no album switched on uses the other screen's albums, never everything mixed.
+     */
+    fun pool(screen: Screen): List<Item> = items.filter { it.album in albumsFor(screen) }
+
+    fun albumsFor(screen: Screen): Set<String> {
+        val home = albums.filter { it.active }.map { it.id }.toSet()
+        if (!settings.lockOwn) return home.ifEmpty { albums.map { it.id }.toSet() }
+        val lock = albums.filter { it.lock }.map { it.id }.toSet()
+        val mine = if (screen == Screen.LOCK) lock else home
+        val other = if (screen == Screen.LOCK) home else lock
+        return mine.ifEmpty { other }.ifEmpty { albums.map { it.id }.toSet() }
     }
 }

@@ -25,6 +25,8 @@ class Library(private val context: Context) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val file = File(context.filesDir, "library.json")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Saves one at a time, in order, so an older save never overwrites a newer one. */
+    private val writer = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val lock = Any()
 
     private val _data = MutableStateFlow(load())
@@ -44,8 +46,8 @@ class Library(private val context: Context) {
         if (next != _data.value) {
             _data.value = next
             val text = json.encodeToString(Data.serializer(), next)
-            scope.launch {
-                synchronized(file) {
+            writer.launch {
+                runCatching {
                     val temp = File(file.parentFile, "library.json.tmp")
                     temp.writeText(text)
                     temp.renameTo(file)
@@ -70,7 +72,7 @@ class Library(private val context: Context) {
                 val (item, bag) = choose(n, Screen.HOME)
                 n = n.copy(current = item?.id ?: n.current, bag = bag)
             }
-            if (lock && n.settings.lockOwn) {
+            if (lock && n.lockHasOwn) {
                 val (item, bag) = choose(n, Screen.LOCK)
                 n = n.copy(lockCurrent = item?.id ?: n.lockCurrent, lockBag = bag)
             }
@@ -145,45 +147,45 @@ class Library(private val context: Context) {
         changed()
     }
 
-    /** Only this album is used from now on (a rule, or "next album"), on both screens. */
+    /**
+     * Only this album is used on the home screen from now on (a rule, or "next album"). The lock
+     * screen's own albums are left as they are.
+     */
     fun switchTo(albumId: String) {
         if (_data.value.albums.none { it.id == albumId }) return
-        update { d ->
-            d.copy(
-                albums = d.albums.map { it.copy(active = it.id == albumId, lock = if (d.settings.lockOwn) it.id == albumId else it.lock) },
-                bag = emptyList(),
-                lockBag = emptyList(),
-            )
-        }
-        next()
+        update { d -> d.copy(albums = d.albums.map { it.copy(active = it.id == albumId) }, bag = emptyList()) }
+        next(home = true, lock = false)
     }
 
-    /** Moves on to the album after the one in use. */
+    /** Moves the home screen on to the album after the one in use (skipping lock screen-only albums). */
     fun nextAlbum() {
-        val albums = _data.value.albums
-        if (albums.isEmpty()) return
-        val at = albums.indexOfFirst { it.active }
-        switchTo(albums[(at + 1) % albums.size].id)
+        val d = _data.value
+        if (d.albums.isEmpty()) return
+        val candidates = d.albums.filter { !(d.lockHasOwn && it.lock && !it.active) }.ifEmpty { d.albums }
+        val at = candidates.indexOfFirst { it.active }
+        switchTo(candidates[(at + 1) % candidates.size].id)
     }
 
     /** The current one is gone or no longer in the rotation: move on. */
     private fun afterPoolChange() {
         val d = _data.value
         val home = d.current == null || d.pool(Screen.HOME).none { it.id == d.current }
-        val lock = d.settings.lockOwn && (d.lockCurrent == null || d.pool(Screen.LOCK).none { it.id == d.lockCurrent })
+        val lock = d.lockHasOwn && (d.lockCurrent == null || d.pool(Screen.LOCK).none { it.id == d.lockCurrent })
         if (home || lock) next(home, lock)
     }
 
     // ---- pictures and videos ----
 
     fun addFiles(album: String, uris: List<Uri>) {
-        val new = uris.mapNotNull { uri ->
-            keep(uri)
-            val type = context.contentResolver.getType(uri).orEmpty()
-            if (!type.startsWith("image/") && !type.startsWith("video/")) return@mapNotNull null
-            Item(newId(), album, uri.toString(), type.startsWith("video/"), displayName(uri))
+        uris.forEach { keep(it) }
+        scope.launch {
+            val new = uris.mapNotNull { uri ->
+                val type = runCatching { context.contentResolver.getType(uri) }.getOrNull().orEmpty()
+                if (!type.startsWith("image/") && !type.startsWith("video/")) return@mapNotNull null
+                Item(newId(), album, uri.toString(), type.startsWith("video/"), displayName(uri))
+            }
+            add(new)
         }
-        add(new)
     }
 
     /** Pictures shared to the app are copied in, as the app that shared them can take them back. */
@@ -332,8 +334,14 @@ class Library(private val context: Context) {
         val after = update { it.copy(settings = change(it.settings)) }.settings
         if (before.subfolders != after.subfolders) rescan()
         if (before.random != after.random) update { it.copy(bag = emptyList(), lockBag = emptyList()) }
-        if (!before.lockOwn && after.lockOwn) afterPoolChange()
+        if (!before.lockOwn && after.lockOwn) {
+            // Never set up for the lock screen (or set up by an older version, which had every
+            // album on for it): start with no album on the lock screen, so nothing gets mixed in
+            if (_data.value.albums.all { it.lock }) update { d -> d.copy(albums = d.albums.map { it.copy(lock = false) }, lockBag = emptyList()) }
+            afterPoolChange()
+        }
         if (before.interval != after.interval || before.paused != after.paused) changed()
+        if (before.paused != after.paused) WidgetUpdates.refresh(context)
     }
 
     fun togglePaused() = setSettings { it.copy(paused = !it.paused) }

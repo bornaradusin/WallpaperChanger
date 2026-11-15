@@ -37,13 +37,15 @@ object Thumbs {
         cache.get(key)?.let { return it }
         val bitmap = withContext(Dispatchers.IO) {
             val u = Uri.parse(uri)
-            runCatching { context.contentResolver.loadThumbnail(u, Size(size, size), null) }.getOrNull()
-                ?: if (video) runCatching {
-                    MediaMetadataRetriever().use { r ->
-                        r.setDataSource(context, u)
-                        r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, size, size)
-                    }
-                }.getOrNull()
+            // Videos: a frame a second in, as the very first one is often black
+            (if (video) runCatching {
+                MediaMetadataRetriever().use { r ->
+                    r.setDataSource(context, u)
+                    r.getScaledFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, size, size)
+                }
+            }.getOrNull() else null)
+                ?: runCatching { context.contentResolver.loadThumbnail(u, Size(size, size), null) }.getOrNull()
+                ?: if (video) null
                 else runCatching {
                     ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, u)) { d, info, _ ->
                         val s = size.toFloat() / max(info.size.width, info.size.height)

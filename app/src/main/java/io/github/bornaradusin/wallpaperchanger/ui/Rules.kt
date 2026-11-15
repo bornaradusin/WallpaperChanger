@@ -94,7 +94,8 @@ fun describe(rule: Rule, data: Data): Pair<String, String> {
     }
     val what = when (val a = rule.action) {
         Action.Next -> "Next wallpaper"
-        is Action.SwitchAlbum -> "Switch to album: " + (data.albums.firstOrNull { it.id == a.album }?.name ?: "(deleted album)")
+        is Action.SwitchAlbum -> (if (data.settings.lockOwn) "Switch the home screen to album: " else "Switch to album: ") +
+            (data.albums.firstOrNull { it.id == a.album }?.name ?: "(deleted album)")
     }
     return whenText to what
 }
