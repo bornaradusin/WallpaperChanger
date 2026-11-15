@@ -149,50 +149,19 @@ fun SettingsTab() {
     }
 }
 
-/** Whether the lock screen has its own rotation, and whether WallpaperChanger is set on each screen. */
+/** Whether the lock screen has its own rotation. */
 @Composable
 private fun LockScreenSettings(own: Boolean, onChange: (Boolean) -> Unit) {
-    val context = LocalContext.current
-    if (android.os.Build.VERSION.SDK_INT < 34) {
-        Text("The lock screen shows the same as the home screen. A separate lock screen needs Android 14 or newer.", style = MaterialTheme.typography.bodyMedium)
-        return
-    }
-    var home by remember { mutableStateOf(onScreen(context, WallpaperManager.FLAG_SYSTEM)) }
-    var lock by remember { mutableStateOf(onScreen(context, WallpaperManager.FLAG_LOCK)) }
-    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
-        home = onScreen(context, WallpaperManager.FLAG_SYSTEM)
-        lock = onScreen(context, WallpaperManager.FLAG_LOCK)
-        onPauseOrDispose { }
-    }
     Toggle(
         "Lock screen has its own pictures and videos",
-        "Each album then has a Home and a Lock switch, so the lock screen can use other albums and folders",
+        "Each album then has a Home and a Lock switch, so the lock screen can use its own albums and folders",
         own, onChange,
     )
-    if (!own) return
     Text(
-        "Set WallpaperChanger twice in Android's wallpaper picker: once choosing Home screen, once choosing Lock screen.",
+        if (own) "While the phone is locked the wallpaper shows the lock screen's; once unlocked, the home screen's. Both are loaded ahead, so the switch is instant. Keep WallpaperChanger set for the home and lock screen together."
+        else "The lock screen shows the same as the home screen.",
         style = MaterialTheme.typography.bodySmall,
     )
-    Text((if (home) "✓" else "✗") + " Home screen", style = MaterialTheme.typography.bodyMedium)
-    Text(
-        (if (lock) "✓" else "✗") + " Lock screen" + if (!lock) " (still showing the home screen's)" else "",
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { setAsWallpaper(context) }) { Text("Open the wallpaper picker") }
-    }
-}
-
-/** WallpaperChanger is this screen's own wallpaper (not just shared from the home screen). */
-private fun onScreen(context: Context, which: Int): Boolean {
-    val wm = WallpaperManager.getInstance(context)
-    val info = if (android.os.Build.VERSION.SDK_INT >= 34) wm.getWallpaperInfo(which) else wm.wallpaperInfo
-    if (info?.packageName != context.packageName) return false
-    if (which != WallpaperManager.FLAG_LOCK) return true
-    // A lock screen sharing the home screen's wallpaper has no id of its own
-    val lockId = wm.getWallpaperId(WallpaperManager.FLAG_LOCK)
-    return lockId >= 0 && lockId != wm.getWallpaperId(WallpaperManager.FLAG_SYSTEM)
 }
 
 @Composable

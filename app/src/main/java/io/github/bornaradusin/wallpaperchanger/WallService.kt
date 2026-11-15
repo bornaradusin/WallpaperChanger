@@ -1,5 +1,6 @@
 package io.github.bornaradusin.wallpaperchanger
 
+import android.app.KeyguardManager
 import android.app.WallpaperColors
 import android.app.WallpaperManager
 import android.content.BroadcastReceiver
@@ -34,7 +35,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
@@ -55,8 +55,15 @@ class WallService : WallpaperService() {
     private val main = Handler(Looper.getMainLooper())
     private var lastSsid: String? = null
 
+    /**
+     * Whether the lock screen is up. With the lock screen on its own rotation, the wallpaper shows
+     * the lock screen's one while this is true and the home screen's once unlocked.
+     */
+    private val locked = MutableStateFlow(false)
+
     /** The change after the screen went off, waiting for the lock animation to finish. */
     private val change = Runnable {
+        locked.value = true
         app.library.rescanIfDue()
         app.library.screenOff()
     }
@@ -78,7 +85,12 @@ class WallService : WallpaperService() {
                     main.postDelayed(change, CHANGE_DELAY_MS)
                 }
                 // Back on before it happened: leave it for the next lock
-                Intent.ACTION_SCREEN_ON -> main.removeCallbacks(change)
+                Intent.ACTION_SCREEN_ON -> {
+                    main.removeCallbacks(change)
+                    locked.value = keyguardLocked()
+                }
+                // Unlocked: over to the home screen's (already loaded, so it's instant)
+                Intent.ACTION_USER_PRESENT -> locked.value = false
             }
         }
     }
@@ -107,7 +119,9 @@ class WallService : WallpaperService() {
         registerReceiver(screen, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
         })
+        locked.value = keyguardLocked()
         runCatching {
             getSystemService(ConnectivityManager::class.java).registerNetworkCallback(
                 NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), wifi,
@@ -125,18 +139,7 @@ class WallService : WallpaperService() {
 
     override fun onCreateEngine(): WallpaperService.Engine = Engine()
 
-    /** A picture or video loaded and ready to go on screen. */
-    private sealed class Ready(val item: Item) {
-        class Picture(item: Item, val bitmap: Bitmap) : Ready(item)
-        class Video(item: Item, val player: MediaPlayer) : Ready(item)
-
-        fun release() {
-            when (this) {
-                is Picture -> bitmap.recycle()
-                is Video -> runCatching { player.release() }
-            }
-        }
-    }
+    private fun keyguardLocked() = runCatching { getSystemService(KeyguardManager::class.java).isKeyguardLocked }.getOrDefault(false)
 
     inner class Engine : WallpaperService.Engine() {
 
@@ -144,7 +147,6 @@ class WallService : WallpaperService() {
         private val gl = Handler(thread.looper)
         private val renderer = Renderer()
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-        private val colorsByKey = ConcurrentHashMap<String, WallpaperColors>()
 
         @Volatile private var visibleNow = false
         @Volatile private var screenW = 1080
@@ -155,15 +157,25 @@ class WallService : WallpaperService() {
         private var lastTapY = 0
         private var xOffset = 0.5f
 
-        /** Which screen this wallpaper is on: the lock screen only when set there on its own. */
-        private val screenFlags = MutableStateFlow(Screen.HOME)
+        /** Which screen Android put this wallpaper on (only the lock screen when set there on its own). */
+        private val flags = MutableStateFlow(Screen.HOME)
 
-        // ---- render thread only ----
-        private var target: Item? = null
-        private var shownKey: String? = null
-        private var ready: Ready? = null
-        private var loadingKey: String? = null
-        private var player: MediaPlayer? = null
+        /**
+         * What one slot of the renderer holds. Slot 0 is the home screen's; slot 1 the lock
+         * screen's, when the lock screen has its own and both share this one wallpaper.
+         * Render thread only.
+         */
+        private inner class Slot(val index: Int) {
+            var target: Item? = null
+            var shownKey: String? = null
+            var loadingKey: String? = null
+            var player: MediaPlayer? = null
+            var colors: WallpaperColors? = null
+        }
+
+        private val slots = arrayOf(Slot(0), Slot(1))
+        /** The slot whose colours Android is told about: always the home screen's. */
+        private var colorSlot = 0
 
         private fun key(item: Item) = item.id + "|" + item.crop
 
@@ -171,11 +183,18 @@ class WallService : WallpaperService() {
             super.onCreate(surfaceHolder)
             engines.add(this)
             val library = app.library
-            screenFlags.value = whichScreen()
+            flags.value = whichScreen()
             scope.launch {
-                combine(library.data, screenFlags) { d, screen -> d.item(screen) }
-                    .distinctUntilChanged()
-                    .collect { item -> gl.post { setTarget(item) } }
+                combine(library.data, flags, locked) { d, screen, isLocked ->
+                    val own = d.settings.lockOwn
+                    when {
+                        // Set on the lock screen on its own (Android 14+): just the lock screen's
+                        screen == Screen.LOCK -> Plan(d.item(Screen.LOCK), null, 0)
+                        // One wallpaper for both screens: the lock screen's while locked, the home screen's after
+                        own -> Plan(d.item(Screen.HOME), d.item(Screen.LOCK), if (isLocked && !isPreview) 1 else 0)
+                        else -> Plan(d.item(Screen.HOME), null, 0)
+                    }
+                }.distinctUntilChanged().collect { plan -> gl.post { apply(plan) } }
             }
             scope.launch {
                 library.data.map { it.settings }.distinctUntilChanged().collect { s ->
@@ -183,7 +202,7 @@ class WallService : WallpaperService() {
                         renderer.scaling = s.scaling
                         renderer.darken = s.darken / 100f
                         renderer.offset = if (s.scroll) xOffset else 0.5f
-                        player?.isLooping = s.videoEnd == VideoEnd.LOOP
+                        slots.forEach { it.player?.isLooping = s.videoEnd == VideoEnd.LOOP }
                         renderer.draw()
                     }
                 }
@@ -194,9 +213,7 @@ class WallService : WallpaperService() {
             engines.remove(this)
             scope.cancel()
             gl.post {
-                releasePlayer()
-                ready?.release()
-                ready = null
+                slots.forEach { releasePlayer(it) }
                 renderer.stop()
             }
             thread.quitSafely()
@@ -207,8 +224,8 @@ class WallService : WallpaperService() {
             super.onSurfaceCreated(holder)
             gl.post {
                 renderer.start(holder.surface)
-                shownKey = null
-                setTarget(target)
+                slots.forEach { it.shownKey = null; it.loadingKey = null }
+                slots.forEach { load(it) }
             }
         }
 
@@ -231,9 +248,8 @@ class WallService : WallpaperService() {
             // The surface has to be let go of before this returns
             val done = CountDownLatch(1)
             gl.post {
-                releasePlayer()
+                slots.forEach { releasePlayer(it); it.shownKey = null; it.loadingKey = null }
                 renderer.stop()
-                shownKey = null
                 done.countDown()
             }
             done.await(1, TimeUnit.SECONDS)
@@ -242,18 +258,7 @@ class WallService : WallpaperService() {
 
         override fun onVisibilityChanged(visible: Boolean) {
             visibleNow = visible
-            gl.post {
-                val p = player ?: return@post
-                runCatching {
-                    if (visible) {
-                        // Play once: from the start each time the wallpaper comes into view
-                        if (app.library.data.value.settings.videoEnd == VideoEnd.ONCE) p.seekTo(0)
-                        p.start()
-                    } else if (p.isPlaying) {
-                        p.pause()
-                    }
-                }
-            }
+            gl.post { playOnlyActive(restart = visible) }
         }
 
         override fun onOffsetsChanged(xOffset: Float, yOffset: Float, xStep: Float, yStep: Float, xPixels: Int, yPixels: Int) {
@@ -261,7 +266,7 @@ class WallService : WallpaperService() {
             if (!app.library.data.value.settings.scroll) return
             gl.post {
                 renderer.offset = xOffset
-                if (player == null) renderer.draw()
+                if (slots[renderer.active].player == null) renderer.draw()
             }
         }
 
@@ -284,7 +289,7 @@ class WallService : WallpaperService() {
 
         override fun onWallpaperFlagsChanged(which: Int) {
             super.onWallpaperFlagsChanged(which)
-            screenFlags.value = whichScreen()
+            flags.value = whichScreen()
         }
 
         private fun whichScreen(): Screen {
@@ -294,101 +299,117 @@ class WallService : WallpaperService() {
 
         // ---- what to show (render thread) ----
 
-        private fun setTarget(item: Item?) {
-            target = item
-            if (item == null) {
-                releasePlayer()
-                shownKey = null
-                renderer.clear()
-                return
-            }
-            if (!renderer.ready || key(item) == shownKey) return
-            val r = ready
-            if (r != null && key(r.item) == key(item)) swap(r) else load(item)
+        private fun apply(plan: Plan) {
+            slots[0].target = plan.home
+            slots[1].target = plan.lock
+            if (plan.lock == null) releaseSlot(slots[1])
+            slots.forEach { load(it) }
+            renderer.setActive(plan.active)
+            playOnlyActive(restart = false)
         }
 
-        private fun load(item: Item) {
+        /** Only the slot on screen plays; the other waits, paused, ready to switch to. */
+        private fun playOnlyActive(restart: Boolean) {
+            val once = app.library.data.value.settings.videoEnd == VideoEnd.ONCE
+            slots.forEach { slot ->
+                val p = slot.player ?: return@forEach
+                runCatching {
+                    if (visibleNow && slot.index == renderer.active) {
+                        // Play once: from the start each time the wallpaper comes into view
+                        if (once && (restart || !p.isPlaying)) p.seekTo(0)
+                        if (!p.isPlaying) p.start()
+                    } else if (p.isPlaying) {
+                        p.pause()
+                    }
+                }
+            }
+        }
+
+        private fun releaseSlot(slot: Slot) {
+            releasePlayer(slot)
+            if (slot.shownKey != null) renderer.clear(slot.index)
+            slot.shownKey = null
+            slot.loadingKey = null
+            slot.colors = null
+        }
+
+        /** Gets the slot's target loaded and into the renderer, unless it already is. */
+        private fun load(slot: Slot) {
+            val item = slot.target
+            if (item == null) {
+                if (slot.index == 0 && slot.shownKey != null) releaseSlot(slot)
+                return
+            }
+            if (!renderer.ready) return
             val k = key(item)
-            if (loadingKey == k) return
-            loadingKey = k
+            if (k == slot.shownKey || k == slot.loadingKey) return
+            slot.loadingKey = k
             if (item.video) {
                 val p = MediaPlayer()
                 runCatching {
                     p.setDataSource(applicationContext, Uri.parse(item.uri))
                     p.setVolume(0f, 0f)
-                    p.setOnPreparedListener { loaded(Ready.Video(item, it)) }
-                    p.setOnErrorListener { mp, _, _ -> if (loadingKey == k) loadingKey = null; mp.release(); true }
+                    p.setOnPreparedListener { videoReady(slot, item, it) }
+                    p.setOnErrorListener { mp, _, _ -> if (slot.loadingKey == k) slot.loadingKey = null; mp.release(); true }
                     p.prepareAsync()
-                }.onFailure { p.release(); loadingKey = null }
-                scope.launch(Dispatchers.IO) { frameColors(item)?.let { gotColors(k, it) } }
+                }.onFailure { p.release(); slot.loadingKey = null }
+                scope.launch(Dispatchers.IO) { frameColors(item)?.let { c -> gl.post { gotColors(slot, k, c) } } }
             } else {
                 scope.launch(Dispatchers.IO) {
-                    val bitmap = decode(item) ?: run { gl.post { if (loadingKey == k) loadingKey = null }; return@launch }
-                    colorsOf(bitmap)?.let { colorsByKey[k] = it }
-                    gl.post { loaded(Ready.Picture(item, bitmap)) }
+                    val bitmap = decode(item) ?: run { gl.post { if (slot.loadingKey == k) slot.loadingKey = null }; return@launch }
+                    val c = colorsOf(bitmap)
+                    gl.post {
+                        if (slot.loadingKey != k || !renderer.ready) {
+                            bitmap.recycle()
+                            return@post
+                        }
+                        releasePlayer(slot)
+                        renderer.showImage(slot.index, bitmap, item.crop)
+                        bitmap.recycle()
+                        slot.loadingKey = null
+                        slot.shownKey = k
+                        c?.let { gotColors(slot, k, it) }
+                    }
                 }
             }
         }
 
-        private fun loaded(r: Ready) {
-            val k = key(r.item)
-            if (loadingKey != k) {
-                r.release()
+        private fun videoReady(slot: Slot, item: Item, p: MediaPlayer) {
+            val k = key(item)
+            if (slot.loadingKey != k || !renderer.ready) {
+                p.release()
                 return
             }
-            loadingKey = null
-            ready?.release()
-            ready = r
-            if (target?.let { key(it) } == k) swap(r)
+            releasePlayer(slot)
+            p.setSurface(renderer.videoSurface(slot.index, item.crop, { renderer.videoFrame(slot.index) }, gl))
+            renderer.videoSize(slot.index, p.videoWidth, p.videoHeight)
+            p.setOnVideoSizeChangedListener { _, w, h -> renderer.videoSize(slot.index, w, h) }
+            p.isLooping = app.library.data.value.settings.videoEnd == VideoEnd.LOOP
+            p.setOnErrorListener { _, _, _ -> true }
+            slot.player = p
+            slot.loadingKey = null
+            slot.shownKey = k
+            // Started for its first frame; paused again unless it's the one on screen
+            p.start()
+            if (!visibleNow || slot.index != renderer.active) p.pause()
         }
 
-
-        /** Puts a loaded picture or video on screen. Quick: everything slow was done beforehand. */
-        private fun swap(r: Ready) {
-            if (!renderer.ready) return
-            ready = null
-            releasePlayer()
-            val item = r.item
-            when (r) {
-                is Ready.Picture -> {
-                    renderer.showImage(r.bitmap, item.crop)
-                    r.bitmap.recycle()
-                }
-                is Ready.Video -> {
-                    val p = r.player
-                    p.setSurface(renderer.videoSurface(item.crop, { renderer.videoFrame() }, gl))
-                    renderer.videoSize(p.videoWidth, p.videoHeight)
-                    p.setOnVideoSizeChangedListener { _, w, h -> renderer.videoSize(w, h) }
-                    p.isLooping = app.library.data.value.settings.videoEnd == VideoEnd.LOOP
-                    p.setOnErrorListener { _, _, _ -> true }
-                    player = p
-                    // Started and paused when hidden, so its first frame is on screen
-                    p.start()
-                    if (!visibleNow) p.pause()
-                }
-            }
-            val k = key(item)
-            shownKey = k
-            colorsByKey[k]?.let { c -> main.post { setColors(c) } }
-            // Keep only what's still needed
-            colorsByKey.keys.retainAll(setOf(k))
+        private fun gotColors(slot: Slot, k: String, c: WallpaperColors) {
+            if (slot.shownKey != k && slot.loadingKey != k) return
+            slot.colors = c
+            if (slot.index == colorSlot && slot.shownKey == k) main.post { setColors(c) }
         }
 
-        private fun gotColors(k: String, c: WallpaperColors) {
-            colorsByKey[k] = c
-            gl.post { if (shownKey == k) main.post { setColors(c) } }
-        }
-
-        /** Tells Android, and so Material You and the launcher, the new wallpaper's colours. */
+        /** Tells Android, and so Material You and the launcher, the wallpaper's colours. */
         private fun setColors(c: WallpaperColors) {
             if (c == colors) return
             colors = c
             notifyColorsChanged()
         }
 
-        private fun releasePlayer() {
-            player?.let { runCatching { it.reset(); it.release() } }
-            player = null
+        private fun releasePlayer(slot: Slot) {
+            slot.player?.let { runCatching { it.reset(); it.release() } }
+            slot.player = null
         }
 
         // ---- loading (background thread) ----
@@ -435,6 +456,9 @@ class WallService : WallpaperService() {
             }
         }.getOrNull()
     }
+
+    /** What an engine shows: the home screen's, the lock screen's (if it has its own), and which is on screen. */
+    private data class Plan(val home: Item?, val lock: Item?, val active: Int)
 
     private companion object {
         const val MAX_TEXTURE = 4096

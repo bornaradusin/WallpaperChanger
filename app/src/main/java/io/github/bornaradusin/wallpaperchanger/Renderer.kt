@@ -32,30 +32,39 @@ class Renderer {
 
     private var imageProgram = 0
     private var videoProgram = 0
-    private var imageTexture = 0
-    private var videoTexture = 0
 
     private var width = 1
     private var height = 1
 
     private enum class Showing { NOTHING, IMAGE, VIDEO }
-    private var showing = Showing.NOTHING
-    private var contentWidth = 1
-    private var contentHeight = 1
-    private var crop: Crop? = null
 
-    /** A new video waits for its first frame; until then the last picture stays on screen. */
-    private var waitingForFrame = false
+    /**
+     * Two things can be loaded at once: the home screen's and the lock screen's. Only the
+     * [active] one is drawn, so switching between them on unlock is instant.
+     */
+    private inner class Slot {
+        var imageTexture = 0
+        var videoTexture = 0
+        var showing = Showing.NOTHING
+        var contentWidth = 1
+        var contentHeight = 1
+        var crop: Crop? = null
+        /** A new video waits for its first frame; until then what was there stays. */
+        var waitingForFrame = false
+        var surfaceTexture: SurfaceTexture? = null
+        val videoMatrix = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
+    }
+
+    private val slots = arrayOf(Slot(), Slot())
+    var active = 0
+        private set
 
     var scaling = Scaling.FILL
     var darken = 0f
     /** 0 … 1: where the home screen has been scrolled to (0.5 when it doesn't scroll). */
     var offset = 0.5f
 
-    private var videoSurfaceTexture: SurfaceTexture? = null
-    private val videoMatrix = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
     private val identity = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
-
     private val vertices: FloatBuffer = ByteBuffer.allocateDirect(16 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
 
     val ready: Boolean get() = surface != EGL14.EGL_NO_SURFACE
@@ -77,12 +86,14 @@ class Renderer {
 
         imageProgram = program(VERTEX, FRAGMENT_IMAGE)
         videoProgram = program(VERTEX, FRAGMENT_VIDEO)
-        val textures = IntArray(2)
-        GLES20.glGenTextures(2, textures, 0)
-        imageTexture = textures[0]
-        videoTexture = textures[1]
-        setUp(GLES20.GL_TEXTURE_2D, imageTexture)
-        setUp(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexture)
+        val textures = IntArray(4)
+        GLES20.glGenTextures(4, textures, 0)
+        slots.forEachIndexed { i, slot ->
+            slot.imageTexture = textures[i * 2]
+            slot.videoTexture = textures[i * 2 + 1]
+            setUp(GLES20.GL_TEXTURE_2D, slot.imageTexture)
+            setUp(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, slot.videoTexture)
+        }
         GLES20.glViewport(0, 0, width, height)
     }
 
@@ -93,8 +104,12 @@ class Renderer {
     }
 
     fun stop() {
-        videoSurfaceTexture?.release()
-        videoSurfaceTexture = null
+        slots.forEach {
+            it.surfaceTexture?.release()
+            it.surfaceTexture = null
+            it.showing = Showing.NOTHING
+            it.waitingForFrame = false
+        }
         if (display != EGL14.EGL_NO_DISPLAY) {
             EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
             if (surface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, surface)
@@ -104,65 +119,79 @@ class Renderer {
         display = EGL14.EGL_NO_DISPLAY
         context = EGL14.EGL_NO_CONTEXT
         surface = EGL14.EGL_NO_SURFACE
-        showing = Showing.NOTHING
-        waitingForFrame = false
     }
 
-    /** Shows a picture from now on. */
-    fun showImage(bitmap: Bitmap, crop: Crop?) {
-        if (!ready) return
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, imageTexture)
-        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
-        contentWidth = bitmap.width
-        contentHeight = bitmap.height
-        this.crop = crop
-        showing = Showing.IMAGE
-        waitingForFrame = false
+    /** Which loaded one is drawn. */
+    fun setActive(slot: Int) {
+        if (slot == active) return
+        active = slot
         draw()
     }
 
-    /** A surface for a video to play into. What's on screen stays until its first frame comes. */
-    fun videoSurface(crop: Crop?, onFrame: () -> Unit, handler: Handler): Surface {
-        videoSurfaceTexture?.release()
-        val texture = SurfaceTexture(videoTexture)
+    /** Puts a picture in a slot (and on screen, if it's the active one). */
+    fun showImage(slot: Int, bitmap: Bitmap, crop: Crop?) {
+        if (!ready) return
+        val s = slots[slot]
+        s.surfaceTexture?.release()
+        s.surfaceTexture = null
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, s.imageTexture)
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+        s.contentWidth = bitmap.width
+        s.contentHeight = bitmap.height
+        s.crop = crop
+        s.showing = Showing.IMAGE
+        s.waitingForFrame = false
+        if (slot == active) draw()
+    }
+
+    /** A surface for a video to play into a slot. What's there stays until its first frame comes. */
+    fun videoSurface(slot: Int, crop: Crop?, onFrame: () -> Unit, handler: Handler): Surface {
+        val s = slots[slot]
+        s.surfaceTexture?.release()
+        val texture = SurfaceTexture(s.videoTexture)
         texture.setOnFrameAvailableListener({ onFrame() }, handler)
-        videoSurfaceTexture = texture
-        this.crop = crop
-        waitingForFrame = true
+        s.surfaceTexture = texture
+        s.crop = crop
+        s.waitingForFrame = true
         return Surface(texture)
     }
 
-    fun videoSize(w: Int, h: Int) {
+    fun videoSize(slot: Int, w: Int, h: Int) {
         if (w > 0 && h > 0) {
-            contentWidth = w
-            contentHeight = h
+            slots[slot].contentWidth = w
+            slots[slot].contentHeight = h
         }
     }
 
-    fun videoFrame() {
-        val texture = videoSurfaceTexture ?: return
+    fun videoFrame(slot: Int) {
+        val s = slots[slot]
+        val texture = s.surfaceTexture ?: return
         if (!ready) return
         texture.updateTexImage()
-        texture.getTransformMatrix(videoMatrix)
-        showing = Showing.VIDEO
-        waitingForFrame = false
-        draw()
+        texture.getTransformMatrix(s.videoMatrix)
+        s.showing = Showing.VIDEO
+        s.waitingForFrame = false
+        if (slot == active) draw()
     }
 
-    fun clear() {
-        showing = Showing.NOTHING
-        waitingForFrame = false
-        draw()
+    fun clear(slot: Int) {
+        val s = slots[slot]
+        s.surfaceTexture?.release()
+        s.surfaceTexture = null
+        s.showing = Showing.NOTHING
+        s.waitingForFrame = false
+        if (slot == active) draw()
     }
 
     fun draw() {
-        if (!ready || waitingForFrame) return
+        val s = slots[active]
+        if (!ready || s.waitingForFrame) return
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-        when (showing) {
+        when (s.showing) {
             Showing.NOTHING -> Unit
-            Showing.IMAGE -> drawQuad(imageProgram, GLES20.GL_TEXTURE_2D, imageTexture, video = false, identity)
-            Showing.VIDEO -> drawQuad(videoProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexture, video = true, videoMatrix)
+            Showing.IMAGE -> drawQuad(s, imageProgram, GLES20.GL_TEXTURE_2D, s.imageTexture, video = false, identity)
+            Showing.VIDEO -> drawQuad(s, videoProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, s.videoTexture, video = true, s.videoMatrix)
         }
         EGL14.eglSwapBuffers(display, surface)
     }
@@ -171,8 +200,10 @@ class Renderer {
      * Where on screen the content goes, and which part of it shows, for the chosen [scaling].
      * Fills [vertices] with x, y, u, v for a strip of four corners.
      */
-    private fun layout(video: Boolean) {
-        val c = crop
+    private fun layout(slot: Slot, video: Boolean) {
+        val c = slot.crop
+        val contentWidth = slot.contentWidth
+        val contentHeight = slot.contentHeight
         // The part of the picture in use (all of it, or the cropped part), in texture terms
         val cl = c?.l ?: 0f
         val ct = c?.t ?: 0f
@@ -226,8 +257,8 @@ class Renderer {
         vertices.position(0)
     }
 
-    private fun drawQuad(program: Int, target: Int, texture: Int, video: Boolean, texMatrix: FloatArray) {
-        layout(video)
+    private fun drawQuad(slot: Slot, program: Int, target: Int, texture: Int, video: Boolean, texMatrix: FloatArray) {
+        layout(slot, video)
         GLES20.glUseProgram(program)
         val pos = GLES20.glGetAttribLocation(program, "aPos")
         val tex = GLES20.glGetAttribLocation(program, "aTex")
