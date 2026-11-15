@@ -16,6 +16,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.Uri
 import android.net.wifi.WifiInfo
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
@@ -29,6 +30,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
@@ -38,10 +41,12 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * The live wallpaper. When the screen goes off, the next picture or video is picked and got ready
- * in the background; when the phone is unlocked it is put up at once. Nothing heavy ever happens
- * on the phone's main thread: files are read on a background thread, and drawing has a thread of
- * its own.
+ * The live wallpaper, like Wallpaper Changer: when the screen goes off, the next picture or video
+ * is loaded, put up and its colours given to Android while the phone sleeps. Android re-themes the
+ * phone then, unseen, and waking and unlocking change nothing, so nothing stutters.
+ *
+ * On Android 14 and newer it can be the lock screen's wallpaper separately from the home
+ * screen's; each one shows its own rotation when the lock screen has its own.
  */
 class WallService : WallpaperService() {
 
@@ -53,15 +58,14 @@ class WallService : WallpaperService() {
         override fun onReceive(context: Context, intent: Intent) {
             // Only the real wallpaper moves things on, not a preview in the wallpaper picker
             if (engines.none { !it.isPreview }) return
-            val library = app.library
-            val settings = library.data.value.settings
-            when (intent.action) {
-                Intent.ACTION_SCREEN_OFF -> {
-                    library.rescanIfDue()
-                    if (settings.onUnlock && !settings.paused) library.prepareNext()
-                }
-                Intent.ACTION_USER_PRESENT -> if (settings.onUnlock && !settings.paused) library.showPrepared()
+            // Keep the phone from sleeping fully until the next one is loaded and up
+            runCatching {
+                getSystemService(PowerManager::class.java)
+                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WallpaperChanger:change")
+                    .acquire(10_000L)
             }
+            app.library.rescanIfDue()
+            app.library.screenOff()
         }
     }
 
@@ -86,10 +90,7 @@ class WallService : WallpaperService() {
 
     override fun onCreate() {
         super.onCreate()
-        registerReceiver(screen, IntentFilter().apply {
-            addAction(Intent.ACTION_SCREEN_OFF)
-            addAction(Intent.ACTION_USER_PRESENT)
-        })
+        registerReceiver(screen, IntentFilter(Intent.ACTION_SCREEN_OFF))
         runCatching {
             getSystemService(ConnectivityManager::class.java).registerNetworkCallback(
                 NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), wifi,
@@ -136,9 +137,11 @@ class WallService : WallpaperService() {
         private var lastTapY = 0
         private var xOffset = 0.5f
 
+        /** Which screen this wallpaper is on: the lock screen only when set there on its own. */
+        private val screenFlags = MutableStateFlow(Screen.HOME)
+
         // ---- render thread only ----
         private var target: Item? = null
-        private var upcoming: Item? = null
         private var shownKey: String? = null
         private var ready: Ready? = null
         private var loadingKey: String? = null
@@ -150,8 +153,12 @@ class WallService : WallpaperService() {
             super.onCreate(surfaceHolder)
             engines.add(this)
             val library = app.library
-            scope.launch { library.data.map { it.currentItem }.distinctUntilChanged().collect { item -> gl.post { setTarget(item) } } }
-            scope.launch { library.pending.collect { item -> gl.post { setUpcoming(item) } } }
+            screenFlags.value = whichScreen()
+            scope.launch {
+                combine(library.data, screenFlags) { d, screen -> d.item(screen) }
+                    .distinctUntilChanged()
+                    .collect { item -> gl.post { setTarget(item) } }
+            }
             scope.launch {
                 library.data.map { it.settings }.distinctUntilChanged().collect { s ->
                     gl.post {
@@ -245,7 +252,7 @@ class WallService : WallpaperService() {
                 val now = SystemClock.uptimeMillis()
                 if (now - lastTap < 400 && abs(x - lastTapX) < 120 && abs(y - lastTapY) < 120) {
                     lastTap = 0
-                    app.library.next()
+                    app.library.next(home = true, lock = false)
                 } else {
                     lastTap = now
                     lastTapX = x
@@ -256,6 +263,16 @@ class WallService : WallpaperService() {
         }
 
         override fun onComputeColors(): WallpaperColors? = colors
+
+        override fun onWallpaperFlagsChanged(which: Int) {
+            super.onWallpaperFlagsChanged(which)
+            screenFlags.value = whichScreen()
+        }
+
+        private fun whichScreen(): Screen {
+            if (isPreview || Build.VERSION.SDK_INT < 34) return Screen.HOME
+            return if (wallpaperFlags == WallpaperManager.FLAG_LOCK) Screen.LOCK else Screen.HOME
+        }
 
         // ---- what to show (render thread) ----
 
@@ -270,14 +287,6 @@ class WallService : WallpaperService() {
             if (!renderer.ready || key(item) == shownKey) return
             val r = ready
             if (r != null && key(r.item) == key(item)) swap(r) else load(item)
-        }
-
-        private fun setUpcoming(item: Item?) {
-            upcoming = item
-            if (item == null) return
-            val k = key(item)
-            if (k == shownKey || k == loadingKey || ready?.let { key(it.item) } == k) return
-            load(item)
         }
 
         private fun load(item: Item) {
@@ -312,21 +321,9 @@ class WallService : WallpaperService() {
             loadingKey = null
             ready?.release()
             ready = r
-            if (target?.let { key(it) } == k) swap(r) else reportEarly(k)
+            if (target?.let { key(it) } == k) swap(r)
         }
 
-        /**
-         * The next one is ready while the screen is off: tell Android its colours now. Android
-         * re-themes the phone straight away only for colours that come while the screen is on
-         * (that is what freezes the phone for a moment); while it's off, it happens unseen. On
-         * unlock only the picture changes, and the colours are already right.
-         */
-        private fun reportEarly(k: String) {
-            if (upcoming?.let { key(it) } != k || screenOn()) return
-            colorsByKey[k]?.let { c -> main.post { setColors(c) } }
-        }
-
-        private fun screenOn() = getSystemService(PowerManager::class.java).isInteractive
 
         /** Puts a loaded picture or video on screen. Quick: everything slow was done beforehand. */
         private fun swap(r: Ready) {
@@ -356,12 +353,12 @@ class WallService : WallpaperService() {
             shownKey = k
             colorsByKey[k]?.let { c -> main.post { setColors(c) } }
             // Keep only what's still needed
-            colorsByKey.keys.retainAll(setOfNotNull(k, upcoming?.let { key(it) }))
+            colorsByKey.keys.retainAll(setOf(k))
         }
 
         private fun gotColors(k: String, c: WallpaperColors) {
             colorsByKey[k] = c
-            gl.post { if (shownKey == k) main.post { setColors(c) } else reportEarly(k) }
+            gl.post { if (shownKey == k) main.post { setColors(c) } }
         }
 
         /** Tells Android, and so Material You and the launcher, the new wallpaper's colours. */

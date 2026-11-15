@@ -3,9 +3,15 @@ package io.github.bornaradusin.wallpaperchanger
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** A set of pictures and videos. Only active albums are used for the rotation. */
+/**
+ * A set of pictures and videos. [active]: used for the home screen; [lock]: used for the lock
+ * screen, when the lock screen has its own rotation.
+ */
 @Serializable
-data class Album(val id: String, val name: String, val active: Boolean = true)
+data class Album(val id: String, val name: String, val active: Boolean = true, val lock: Boolean = true)
+
+/** The two places a wallpaper shows. */
+enum class Screen { HOME, LOCK }
 
 /** One picture or video in an album. */
 @Serializable
@@ -92,8 +98,8 @@ data class Settings(
     val darken: Int = 0,
     val videoEnd: VideoEnd = VideoEnd.LOOP,
     val paused: Boolean = false,
-    /** A fixed picture for the lock screen, or null to show the rotation there too. */
-    val lockImage: String? = null,
+    /** The lock screen has its own albums and its own place in the rotation (Android 14 and newer). */
+    val lockOwn: Boolean = false,
 )
 
 @Serializable
@@ -106,14 +112,22 @@ data class Data(
     val current: String? = null,
     /** Still to show in this round of the random order. */
     val bag: List<String> = emptyList(),
+    val lockCurrent: String? = null,
+    val lockBag: List<String> = emptyList(),
     val scanned: Long = 0,
 ) {
     val currentItem get() = items.firstOrNull { it.id == current }
 
-    /** What the rotation picks from: the active albums (all of them if none is active). */
-    val pool: List<Item>
-        get() {
-            val active = albums.filter { it.active }.map { it.id }.toSet()
-            return if (active.isEmpty()) items else items.filter { it.album in active }
-        }
+    /** What's on the lock screen: its own one, or the home screen's. */
+    val lockItem get() = if (settings.lockOwn) items.firstOrNull { it.id == lockCurrent } else currentItem
+
+    fun item(screen: Screen) = if (screen == Screen.LOCK) lockItem else currentItem
+
+    /** What the home screen picks from: its albums (all of them if none is switched on). */
+    val pool: List<Item> get() = pool(Screen.HOME)
+
+    fun pool(screen: Screen): List<Item> {
+        val on = albums.filter { if (screen == Screen.LOCK && settings.lockOwn) it.lock else it.active }.map { it.id }.toSet()
+        return if (on.isEmpty()) items else items.filter { it.album in on }
+    }
 }

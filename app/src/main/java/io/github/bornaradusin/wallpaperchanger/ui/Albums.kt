@@ -58,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.bornaradusin.wallpaperchanger.Album
 import io.github.bornaradusin.wallpaperchanger.Item
 import io.github.bornaradusin.wallpaperchanger.R
+import io.github.bornaradusin.wallpaperchanger.Screen
 import io.github.bornaradusin.wallpaperchanger.app
 
 @Composable
@@ -75,12 +76,15 @@ fun AlbumsTab(open: (Page) -> Unit) {
             Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     data.currentItem?.let { Thumb(it, Modifier.size(64.dp).clip(RoundedCornerShape(8.dp))) }
+                    if (data.settings.lockOwn) data.lockItem?.let {
+                        Thumb(it, Modifier.padding(start = 6.dp).size(64.dp).clip(RoundedCornerShape(8.dp)))
+                    }
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text("Showing now", style = MaterialTheme.typography.labelMedium)
+                        Text(if (data.settings.lockOwn) "Home · Lock screen" else "Showing now", style = MaterialTheme.typography.labelMedium)
                         Text(data.currentItem?.name ?: "Nothing yet", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (data.settings.paused) Text("Rotation paused", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
-                    FilledTonalButton(onClick = { library.next() }, enabled = data.pool.size > 1) { Text("Next") }
+                    FilledTonalButton(onClick = { library.next() }, enabled = data.items.size > 1) { Text("Next") }
                 }
             }
         }
@@ -103,7 +107,18 @@ fun AlbumsTab(open: (Page) -> Unit) {
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    Switch(album.active, { library.setActive(album, it) })
+                    if (data.settings.lockOwn) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Home", style = MaterialTheme.typography.labelSmall)
+                            Switch(album.active, { library.setActive(album, it, Screen.HOME) })
+                        }
+                        Column(Modifier.padding(start = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Lock", style = MaterialTheme.typography.labelSmall)
+                            Switch(album.lock, { library.setActive(album, it, Screen.LOCK) })
+                        }
+                    } else {
+                        Switch(album.active, { library.setActive(album, it) })
+                    }
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(painterResource(R.drawable.ic_more), "Rename or delete this album") }
                         DropdownMenu(menu, { menu = false }) {
@@ -119,7 +134,8 @@ fun AlbumsTab(open: (Page) -> Unit) {
                 OutlinedButton(onClick = { creating = true }) { Text("Add new album") }
             }
             Text(
-                "Switch albums on or off to choose which ones the rotation uses, so you can have one for winter and one for summer and change between them.",
+                if (data.settings.lockOwn) "Home and Lock choose which albums each screen uses, so the lock screen can have its own pictures, videos and folders."
+                else "Switch albums on or off to choose which ones the rotation uses, so you can have one for winter and one for summer and change between them.",
                 Modifier.padding(horizontal = 16.dp),
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -244,9 +260,13 @@ fun AlbumScreen(albumId: String, open: (Page) -> Unit, back: () -> Unit) {
                             tint = Color.White,
                         )
                     }
-                    if (item.id == data.current) {
+                    val now = listOfNotNull(
+                        if (item.id == data.current) (if (data.settings.lockOwn) "Home" else "Now") else null,
+                        if (data.settings.lockOwn && item.id == data.lockCurrent) "Lock" else null,
+                    ).joinToString(" · ")
+                    if (now.isNotEmpty()) {
                         Text(
-                            "Now", Modifier.align(Alignment.TopStart).padding(4.dp)
+                            now, Modifier.align(Alignment.TopStart).padding(4.dp)
                                 .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)).padding(horizontal = 4.dp),
                             color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelSmall,
                         )
@@ -263,7 +283,12 @@ fun AlbumScreen(albumId: String, open: (Page) -> Unit, back: () -> Unit) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Thumb(item, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)), size = 720, scale = androidx.compose.ui.layout.ContentScale.Fit)
-                    TextButton(onClick = { library.show(item); picked = null }) { Text("Set as wallpaper now") }
+                    if (data.settings.lockOwn) {
+                        TextButton(onClick = { library.show(item, Screen.HOME); picked = null }) { Text("Set for the home screen now") }
+                        TextButton(onClick = { library.show(item, Screen.LOCK); picked = null }) { Text("Set for the lock screen now") }
+                    } else {
+                        TextButton(onClick = { library.show(item); picked = null }) { Text("Set as wallpaper now") }
+                    }
                     TextButton(onClick = { picked = null; open(Page.CropPage(item.id)) }) { Text(if (item.crop == null) "Crop" else "Change crop") }
                     if (item.crop != null) TextButton(onClick = { library.setCrop(item, null); picked = null }) { Text("Remove crop") }
                     TextButton(onClick = { library.remove(listOf(item)); picked = null }) { Text("Delete from the album") }

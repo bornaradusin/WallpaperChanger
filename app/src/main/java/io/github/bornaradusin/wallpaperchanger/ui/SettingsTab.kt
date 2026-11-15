@@ -68,22 +68,12 @@ fun SettingsTab() {
     val s = data.settings
     val scope = rememberCoroutineScope()
 
-    val pickLock = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-        scope.launch {
-            val ok = withContext(Dispatchers.IO) { setLockScreen(context, uri) }
-            if (ok) library.setSettings { it.copy(lockImage = uri.toString()) }
-            else Toast.makeText(context, "The image could not be loaded", Toast.LENGTH_LONG).show()
-        }
-    }
-
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         NotActiveBanner()
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
 
             Section("When to change") {
-                Toggle("Change wallpaper on lockscreen unlock", "The next one is got ready while the screen is off, so it's there the moment you unlock", s.onUnlock) {
+                Toggle("Change wallpaper on lockscreen unlock", "The next one goes up while the screen is off, so it's on the lock screen when you wake the phone and nothing changes as you unlock", s.onUnlock) {
                     library.setSettings { c -> c.copy(onUnlock = it) }
                 }
                 Choice("Change wallpaper every", INTERVALS, s.interval) { library.setSettings { c -> c.copy(interval = it) } }
@@ -149,24 +139,8 @@ fun SettingsTab() {
                 Text("Videos are always muted.", style = MaterialTheme.typography.bodySmall)
             }
 
-            Section("Lockscreen") {
-                Text(
-                    if (s.lockImage == null) "The lock screen shows the same as the home screen."
-                    else "The lock screen shows its own fixed picture.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                s.lockImage?.let { uri ->
-                    Thumb(Item("lock", "", uri, false, ""), Modifier.size(96.dp).clip(RoundedCornerShape(8.dp)))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { pickLock.launch(arrayOf("image/*")) }) { Text(if (s.lockImage == null) "Pick a lock screen picture" else "Change") }
-                    if (s.lockImage != null) TextButton(onClick = {
-                        scope.launch {
-                            withContext(Dispatchers.IO) { runCatching { WallpaperManager.getInstance(context).clear(WallpaperManager.FLAG_LOCK) } }
-                            library.setSettings { it.copy(lockImage = null) }
-                        }
-                    }) { Text("Same as home screen") }
-                }
+            Section("Lock screen") {
+                LockScreenSettings(s.lockOwn) { on -> library.setSettings { it.copy(lockOwn = on) } }
             }
 
             UpdateCard()
@@ -175,12 +149,51 @@ fun SettingsTab() {
     }
 }
 
-private fun setLockScreen(context: Context, uri: Uri): Boolean = runCatching {
-    context.contentResolver.openInputStream(uri)!!.use {
-        WallpaperManager.getInstance(context).setStream(it, null, true, WallpaperManager.FLAG_LOCK)
+/** Whether the lock screen has its own rotation, and whether WallpaperChanger is set on each screen. */
+@Composable
+private fun LockScreenSettings(own: Boolean, onChange: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    if (android.os.Build.VERSION.SDK_INT < 34) {
+        Text("The lock screen shows the same as the home screen. A separate lock screen needs Android 14 or newer.", style = MaterialTheme.typography.bodyMedium)
+        return
     }
-    true
-}.getOrDefault(false)
+    var home by remember { mutableStateOf(onScreen(context, WallpaperManager.FLAG_SYSTEM)) }
+    var lock by remember { mutableStateOf(onScreen(context, WallpaperManager.FLAG_LOCK)) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        home = onScreen(context, WallpaperManager.FLAG_SYSTEM)
+        lock = onScreen(context, WallpaperManager.FLAG_LOCK)
+        onPauseOrDispose { }
+    }
+    Toggle(
+        "Lock screen has its own pictures and videos",
+        "Each album then has a Home and a Lock switch, so the lock screen can use other albums and folders",
+        own, onChange,
+    )
+    if (!own) return
+    Text(
+        "Set WallpaperChanger twice in Android's wallpaper picker: once choosing Home screen, once choosing Lock screen.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Text((if (home) "✓" else "✗") + " Home screen", style = MaterialTheme.typography.bodyMedium)
+    Text(
+        (if (lock) "✓" else "✗") + " Lock screen" + if (!lock) " (still showing the home screen's)" else "",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { setAsWallpaper(context) }) { Text("Open the wallpaper picker") }
+    }
+}
+
+/** WallpaperChanger is this screen's own wallpaper (not just shared from the home screen). */
+private fun onScreen(context: Context, which: Int): Boolean {
+    val wm = WallpaperManager.getInstance(context)
+    val info = if (android.os.Build.VERSION.SDK_INT >= 34) wm.getWallpaperInfo(which) else wm.wallpaperInfo
+    if (info?.packageName != context.packageName) return false
+    if (which != WallpaperManager.FLAG_LOCK) return true
+    // A lock screen sharing the home screen's wallpaper has no id of its own
+    val lockId = wm.getWallpaperId(WallpaperManager.FLAG_LOCK)
+    return lockId >= 0 && lockId != wm.getWallpaperId(WallpaperManager.FLAG_SYSTEM)
+}
 
 @Composable
 private fun Section(title: String, content: @Composable () -> Unit) {

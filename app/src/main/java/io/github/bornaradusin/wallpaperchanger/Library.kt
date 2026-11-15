@@ -30,11 +30,6 @@ class Library(private val context: Context) {
     private val _data = MutableStateFlow(load())
     val data: StateFlow<Data> = _data.asStateFlow()
 
-    /** The next one, picked and being got ready while the screen is off; shown on unlock. */
-    private val _pending = MutableStateFlow<Item?>(null)
-    val pending: StateFlow<Item?> = _pending.asStateFlow()
-    private var pendingBag: List<String>? = null
-
     private val _scanning = MutableStateFlow(false)
     val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
 
@@ -64,52 +59,49 @@ class Library(private val context: Context) {
 
     // ---- the rotation ----
 
-    /** Puts up the next one straight away. */
-    fun next() {
-        val (item, bag) = choose(_data.value)
-        _pending.value = null
-        pendingBag = null
-        update { it.copy(current = item?.id ?: it.current, bag = bag) }
-    }
-
-    /** The screen went off: pick the next one now, so it is ready the moment the phone unlocks. */
-    fun prepareNext() {
-        val d = _data.value
-        if (_pending.value != null) return
-        val (item, bag) = choose(d)
-        if (item == null || item.id == d.current) return
-        pendingBag = bag
-        _pending.value = item
-    }
-
-    /** Unlocked: show what was got ready. */
-    fun showPrepared() {
-        val item = _pending.value ?: return
-        val bag = pendingBag
-        _pending.value = null
-        pendingBag = null
+    /**
+     * Puts up the next one: on the home screen, and on the lock screen too when it has its own
+     * rotation. [home]/[lock] pick which.
+     */
+    fun next(home: Boolean = true, lock: Boolean = true) {
         update { d ->
-            if (d.items.none { it.id == item.id }) d else d.copy(current = item.id, bag = bag ?: d.bag)
+            var n = d
+            if (home) {
+                val (item, bag) = choose(n, Screen.HOME)
+                n = n.copy(current = item?.id ?: n.current, bag = bag)
+            }
+            if (lock && n.settings.lockOwn) {
+                val (item, bag) = choose(n, Screen.LOCK)
+                n = n.copy(lockCurrent = item?.id ?: n.lockCurrent, lockBag = bag)
+            }
+            n
         }
     }
 
-    fun show(item: Item) {
-        _pending.value = null
-        update { it.copy(current = item.id) }
+    /** The screen went off: the next one goes up now, while no one can see it. */
+    fun screenOff() {
+        val s = _data.value.settings
+        if (s.onUnlock && !s.paused) next()
     }
 
-    private fun choose(d: Data): Pair<Item?, List<String>> {
-        val pool = d.pool
+    fun show(item: Item, screen: Screen = Screen.HOME) {
+        update { if (screen == Screen.LOCK) it.copy(lockCurrent = item.id) else it.copy(current = item.id) }
+    }
+
+    private fun choose(d: Data, screen: Screen): Pair<Item?, List<String>> {
+        val pool = d.pool(screen)
+        val current = if (screen == Screen.LOCK) d.lockCurrent else d.current
+        val oldBag = if (screen == Screen.LOCK) d.lockBag else d.bag
         if (pool.isEmpty()) return null to emptyList()
         if (pool.size == 1) return pool.first() to emptyList()
         if (d.settings.random) {
             // A shuffled pile: nothing comes back until everything has been shown
             val ids = pool.map { it.id }.toSet()
-            var bag = d.bag.filter { it in ids }
-            if (bag.isEmpty()) bag = pool.map { it.id }.filter { it != d.current }.shuffled()
+            var bag = oldBag.filter { it in ids }
+            if (bag.isEmpty()) bag = pool.map { it.id }.filter { it != current }.shuffled()
             return pool.first { it.id == bag.first() } to bag.drop(1)
         }
-        val at = pool.indexOfFirst { it.id == d.current }
+        val at = pool.indexOfFirst { it.id == current }
         return pool[(at + 1) % pool.size] to emptyList()
     }
 
@@ -124,8 +116,14 @@ class Library(private val context: Context) {
     fun renameAlbum(album: Album, name: String) =
         update { d -> d.copy(albums = d.albums.map { if (it.id == album.id) it.copy(name = name.trim().ifBlank { it.name }) else it }) }
 
-    fun setActive(album: Album, active: Boolean) {
-        update { d -> d.copy(albums = d.albums.map { if (it.id == album.id) it.copy(active = active) else it }, bag = emptyList()) }
+    fun setActive(album: Album, active: Boolean, screen: Screen = Screen.HOME) {
+        update { d ->
+            d.copy(
+                albums = d.albums.map { if (it.id != album.id) it else if (screen == Screen.LOCK) it.copy(lock = active) else it.copy(active = active) },
+                bag = if (screen == Screen.HOME) emptyList() else d.bag,
+                lockBag = if (screen == Screen.LOCK) emptyList() else d.lockBag,
+            )
+        }
         afterPoolChange()
     }
 
@@ -138,6 +136,7 @@ class Library(private val context: Context) {
                 items = d.items.filterNot { it.album == album.id },
                 folders = d.folders.filterNot { it.album == album.id },
                 bag = emptyList(),
+                lockBag = emptyList(),
             )
         }
         gone.forEach { release(it.uri) }
@@ -146,10 +145,16 @@ class Library(private val context: Context) {
         changed()
     }
 
-    /** Only this album is used from now on (a rule, or "next album"). */
+    /** Only this album is used from now on (a rule, or "next album"), on both screens. */
     fun switchTo(albumId: String) {
         if (_data.value.albums.none { it.id == albumId }) return
-        update { d -> d.copy(albums = d.albums.map { it.copy(active = it.id == albumId) }, bag = emptyList()) }
+        update { d ->
+            d.copy(
+                albums = d.albums.map { it.copy(active = it.id == albumId, lock = if (d.settings.lockOwn) it.id == albumId else it.lock) },
+                bag = emptyList(),
+                lockBag = emptyList(),
+            )
+        }
         next()
     }
 
@@ -164,7 +169,9 @@ class Library(private val context: Context) {
     /** The current one is gone or no longer in the rotation: move on. */
     private fun afterPoolChange() {
         val d = _data.value
-        if (d.current == null || d.pool.none { it.id == d.current }) next()
+        val home = d.current == null || d.pool(Screen.HOME).none { it.id == d.current }
+        val lock = d.settings.lockOwn && (d.lockCurrent == null || d.pool(Screen.LOCK).none { it.id == d.lockCurrent })
+        if (home || lock) next(home, lock)
     }
 
     // ---- pictures and videos ----
@@ -324,7 +331,8 @@ class Library(private val context: Context) {
         val before = _data.value.settings
         val after = update { it.copy(settings = change(it.settings)) }.settings
         if (before.subfolders != after.subfolders) rescan()
-        if (before.random != after.random) update { it.copy(bag = emptyList()) }
+        if (before.random != after.random) update { it.copy(bag = emptyList(), lockBag = emptyList()) }
+        if (!before.lockOwn && after.lockOwn) afterPoolChange()
         if (before.interval != after.interval || before.paused != after.paused) changed()
     }
 
