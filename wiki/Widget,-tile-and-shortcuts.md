@@ -8,6 +8,9 @@ Add the WallpaperChanger widget to the home screen. When it's added you choose:
 - **Widget text** and **Text color**.
 - **Widget icon** on or off.
 
+
+<img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/widget.png" width="260" alt="Widget setup">
+
 Long-press the widget and choose its settings to change them later.
 
 ## Quick settings tile

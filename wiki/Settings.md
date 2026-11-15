@@ -2,6 +2,8 @@
 
 ## Order
 
+<img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/settings-2.png" width="260" alt="Order and image position">
+
 | Setting | What it does |
 |---|---|
 | **Random wallpaper order** | Nothing comes back until everything has been shown once. Off: in order. |
@@ -21,6 +23,8 @@
 | **Darken wallpaper** | 0–80 %, so the icons and text on the home screen are easier to read. |
 
 ## Videos
+
+<img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/settings-3.png" width="260" alt="Videos and lock screen">
 
 - **Loop**: plays over and over while you can see it, and pauses when you can't.
 - **Play once**: plays from the start each time the wallpaper comes into view, then stops on its last frame.

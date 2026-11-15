@@ -2,6 +2,8 @@
 
 Settings → **When to change**:
 
+<img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/settings-1.png" width="260" alt="When to change">
+
 | Setting | What it does |
 |---|---|
 | **Change wallpaper on lockscreen unlock** | A second after the screen goes off (once Android has finished locking), the next one goes up and the phone's colours change to match, while no one can see it. It's on the lock screen when you wake the phone, and nothing changes as you unlock. Turning the screen back on within that second leaves the change for the next lock. |

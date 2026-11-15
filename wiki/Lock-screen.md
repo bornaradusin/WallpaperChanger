@@ -2,6 +2,8 @@
 
 Normally the lock screen shows the same as the home screen.
 
+<img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/lock-screen.png" width="260" alt="Lock screen"> <img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/settings-4.png" width="260" alt="Lock screen setting">
+
 The lock screen can also have **its own pictures and videos**, from its own albums and folders:
 
 1. Settings → **Lock screen** → turn on **Lock screen has its own pictures and videos**.

@@ -2,6 +2,8 @@
 
 Rules tab → **Add rule**. A rule is *when* and *do*.
 
+<img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/rules.png" width="260" alt="Rules tab">
+
 **When**
 - **Time**: a time of day, every day, on weekdays, at weekends, or on the days you pick.
 - **Place**: tap the map (OpenStreetMap) where it should happen and set the radius. **Use my location** puts the pin where you are.
@@ -12,6 +14,9 @@ Rules tab → **Add rule**. A rule is *when* and *do*.
 - **Switch album**: only that album is used from then on, and the next wallpaper comes from it.
 
 Each rule has a switch to turn it off without deleting it. Tap a rule to change or delete it.
+
+
+<img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/rule-time.png" width="260" alt="Time rule"> <img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/rule-place.png" width="260" alt="Place rule">
 
 ## Location
 

@@ -4,6 +4,8 @@ A live wallpaper for Android that puts up a **new picture or video each time you
 
 Like Wallpaper Changer, it changes a second after the screen goes off, once Android has finished locking. The new one, and the phone's colours to match, are ready when you wake the phone, and nothing stutters.
 
+<img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/home-screen.png" width="260" alt="Home screen"> <img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/lock-screen.png" width="260" alt="Lock screen">
+
 - [[Getting started]]
 - [[Albums]]
 - [[When it changes]]

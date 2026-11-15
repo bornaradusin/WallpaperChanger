@@ -240,9 +240,13 @@ def widget():
 def screens():
     shell("input", "keyevent", "3")
     shot("home-screen", settle=4)
+    # The emulator starts with no lock screen: turn the swipe one on, then lock and wake
+    shell("locksettings", "set-disabled", "false")
     shell("input", "keyevent", "26")
-    time.sleep(5)
+    time.sleep(6)
     shell("input", "keyevent", "224")
+    time.sleep(2)
+    print("keyguard:", "mShowing=true" in shell("dumpsys", "window", "policy") or "showing=true" in shell("dumpsys", "activity", "service", "com.android.systemui").lower())
     shot("lock-screen", settle=4)
 
 

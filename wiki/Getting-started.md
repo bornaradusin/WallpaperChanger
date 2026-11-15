@@ -7,6 +7,8 @@
 
 **Next** on the Albums tab puts up the next one straight away.
 
+<img src="https://raw.githubusercontent.com/wiki/bornaradusin/WallpaperChanger/images/albums.png" width="260" alt="Albums tab">
+
 ## What counts
 
 Any picture (JPG, PNG, WebP, HEIC…) or video (MP4, WebM…) the phone can open. Videos are always muted.
