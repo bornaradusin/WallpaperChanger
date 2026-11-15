@@ -12,6 +12,7 @@ Albums keep your wallpapers in sets, like one for winter and one for summer.
 
 
 - **Add pictures/videos** picks single files; **Add folder** adds a whole folder. Folders are looked through again on their own (see [[Settings]]) and with **Scan folders now**.
+- Tap a video to choose **When it ends**: **Default** (the setting for all videos, under Settings › Videos), **Loop**, or **Play once** (from the start each time it comes into view, then it stops on its last frame). Videos with their own choice show **Loop** or **Once** on their thumbnail. It takes effect straight away, even on the video showing now.
 - Tap a picture for **Set as wallpaper now** (or **Set for the home screen now** / **Set for the lock screen now**), **Crop**, or **Delete from the album**.
 - Long-press to select several, then **Delete**.
 - **Now** marks what's on the wallpaper (**Home** and **Lock** when the lock screen has its own).

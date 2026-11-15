@@ -29,6 +29,8 @@
 - **Loop**: plays over and over while you can see it, and pauses when you can't.
 - **Play once**: plays from the start each time the wallpaper comes into view, then stops on its last frame.
 
+This is the setting for all videos. Each video can have its own: see [[Albums]].
+
 ## Lock screen
 
 See [[Lock screen]].
