@@ -18,8 +18,8 @@ android {
         applicationId = "io.github.bornaradusin.wallpaperchanger"
         minSdk = 31
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.3.1"
+        versionCode = 8
+        versionName = "1.3.2"
     }
 
     signingConfigs {

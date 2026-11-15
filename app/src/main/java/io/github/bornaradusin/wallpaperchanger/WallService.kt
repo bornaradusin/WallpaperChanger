@@ -172,11 +172,18 @@ class WallService : WallpaperService() {
             var loadingKey: String? = null
             var player: MediaPlayer? = null
             var colors: WallpaperColors? = null
+            /** What's loaded in it now (the target can already be the next one). */
+            var shown: Item? = null
         }
 
         private val slots = arrayOf(Slot(0), Slot(1))
         /** The slot that should be on screen; the lock screen's only once it has something loaded. */
         private var wanted = 0
+        /** The slot that was playing, to tell when another one comes on screen. */
+        private var playing = -1
+
+        /** Loop or play once: the video's own choice, or the setting for all videos. */
+        private fun endOf(item: Item?): VideoEnd = item?.videoEnd ?: app.library.data.value.settings.videoEnd
         /** The slot whose colours Android is told about: always the home screen's. */
         private var colorSlot = 0
 
@@ -205,7 +212,7 @@ class WallService : WallpaperService() {
                         renderer.scaling = s.scaling
                         renderer.darken = s.darken / 100f
                         renderer.offset = if (s.scroll) xOffset else 0.5f
-                        slots.forEach { it.player?.isLooping = s.videoEnd == VideoEnd.LOOP }
+                        slots.forEach { it.player?.isLooping = endOf(it.shown) == VideoEnd.LOOP }
                         renderer.draw()
                     }
                 }
@@ -305,6 +312,14 @@ class WallService : WallpaperService() {
         private fun apply(plan: Plan) {
             slots[0].target = plan.home
             slots[1].target = plan.lock
+            // A video's loop / play once changed: takes effect on the one playing, no reload
+            slots.forEach { slot ->
+                val t = slot.target
+                if (t != null && slot.shownKey == key(t)) {
+                    slot.shown = t
+                    slot.player?.isLooping = endOf(t) == VideoEnd.LOOP
+                }
+            }
             wanted = plan.active
             showWanted()
             if (plan.lock == null) releaseSlot(slots[1])
@@ -319,14 +334,24 @@ class WallService : WallpaperService() {
 
         /** Only the slot on screen plays; the other waits, paused, ready to switch to. */
         private fun playOnlyActive(restart: Boolean) {
-            val once = app.library.data.value.settings.videoEnd == VideoEnd.ONCE
+            val active = if (visibleNow) renderer.active else -1
+            // Coming into view, or switching screens, counts as a new showing
+            val fresh = restart || active != playing
+            playing = active
             slots.forEach { slot ->
                 val p = slot.player ?: return@forEach
                 runCatching {
-                    if (visibleNow && slot.index == renderer.active) {
-                        // Play once: from the start each time the wallpaper comes into view
-                        if (once && (restart || !p.isPlaying)) p.seekTo(0)
-                        if (!p.isPlaying) p.start()
+                    if (slot.index == active) {
+                        if (endOf(slot.shown) == VideoEnd.ONCE) {
+                            // Play once: from the start each time it comes into view, then it stays
+                            // on its last frame (and isn't started again until the next showing)
+                            if (fresh) {
+                                p.seekTo(0)
+                                p.start()
+                            }
+                        } else if (!p.isPlaying) {
+                            p.start()
+                        }
                     } else if (p.isPlaying) {
                         p.pause()
                     }
@@ -340,6 +365,7 @@ class WallService : WallpaperService() {
             slot.shownKey = null
             slot.loadingKey = null
             slot.colors = null
+            slot.shown = null
         }
 
         /** Gets the slot's target loaded and into the renderer, unless it already is. */
@@ -377,6 +403,7 @@ class WallService : WallpaperService() {
                         bitmap.recycle()
                         slot.loadingKey = null
                         slot.shownKey = k
+                        slot.shown = item
                         c?.let { gotColors(slot, k, it) }
                         if (slot.index == 1) showWanted()
                     }
@@ -394,11 +421,12 @@ class WallService : WallpaperService() {
             p.setSurface(renderer.videoSurface(slot.index, item.crop, { renderer.videoFrame(slot.index) }, gl))
             renderer.videoSize(slot.index, p.videoWidth, p.videoHeight)
             p.setOnVideoSizeChangedListener { _, w, h -> renderer.videoSize(slot.index, w, h) }
-            p.isLooping = app.library.data.value.settings.videoEnd == VideoEnd.LOOP
+            p.isLooping = endOf(item) == VideoEnd.LOOP
             p.setOnErrorListener { _, _, _ -> true }
             slot.player = p
             slot.loadingKey = null
             slot.shownKey = k
+            slot.shown = item
             // Started for its first frame; paused again unless it's the one on screen
             p.start()
             if (!visibleNow || slot.index != renderer.active) p.pause()

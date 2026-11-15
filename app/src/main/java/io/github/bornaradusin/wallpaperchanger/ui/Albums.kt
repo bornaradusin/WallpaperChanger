@@ -37,6 +37,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import io.github.bornaradusin.wallpaperchanger.VideoEnd
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -275,6 +279,14 @@ fun AlbumScreen(albumId: String, open: (Page) -> Unit, back: () -> Unit) {
                             Modifier.align(Alignment.Center).size(32.dp).background(Color(0x66000000), RoundedCornerShape(16.dp)).padding(4.dp),
                             tint = Color.White,
                         )
+                        item.videoEnd?.let { end ->
+                            Text(
+                                if (end == VideoEnd.ONCE) "Once" else "Loop",
+                                Modifier.align(Alignment.BottomEnd).padding(4.dp)
+                                    .background(Color(0x99000000), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp),
+                                color = Color.White, style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
                     }
                     val now = listOfNotNull(
                         if (item.id == data.current) (if (data.settings.lockOwn) "Home" else "Now") else null,
@@ -292,7 +304,9 @@ fun AlbumScreen(albumId: String, open: (Page) -> Unit, back: () -> Unit) {
         }
     }
 
-    picked?.let { item ->
+    picked?.let { pickedItem ->
+        // Follow the library, so a change made here shows straight away
+        val item = data.items.firstOrNull { it.id == pickedItem.id } ?: pickedItem
         AlertDialog(
             onDismissRequest = { picked = null },
             title = { Text(item.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
@@ -304,6 +318,28 @@ fun AlbumScreen(albumId: String, open: (Page) -> Unit, back: () -> Unit) {
                         TextButton(onClick = { library.show(item, Screen.LOCK); picked = null }) { Text("Set for the lock screen now") }
                     } else {
                         TextButton(onClick = { library.show(item); picked = null }) { Text("Set as wallpaper now") }
+                    }
+                    if (item.video) {
+                        Text("When it ends", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
+                        val general = if (data.settings.videoEnd == VideoEnd.LOOP) "Loop" else "Play once"
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            val options = listOf(null to "Default", VideoEnd.LOOP to "Loop", VideoEnd.ONCE to "Play once")
+                            options.forEachIndexed { i, (end, label) ->
+                                SegmentedButton(
+                                    item.videoEnd == end,
+                                    { library.setVideoEnd(item, end) },
+                                    SegmentedButtonDefaults.itemShape(i, options.size),
+                                ) { Text(label, maxLines = 1) }
+                            }
+                        }
+                        Text(
+                            when (item.videoEnd) {
+                                null -> "Follows Settings › Videos ($general)."
+                                VideoEnd.LOOP -> "Plays over and over while you can see it."
+                                VideoEnd.ONCE -> "Plays from the start each time it comes into view, then stops on its last frame."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                     TextButton(onClick = { picked = null; open(Page.CropPage(item.id)) }) { Text(if (item.crop == null) "Crop" else "Change crop") }
                     if (item.crop != null) TextButton(onClick = { library.setCrop(item, null); picked = null }) { Text("Remove crop") }

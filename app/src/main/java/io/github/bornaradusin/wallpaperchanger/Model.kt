@@ -25,6 +25,8 @@ data class Item(
     val folder: String? = null,
     /** The part of the picture to show, if it was cropped. */
     val crop: Crop? = null,
+    /** For a video: loop or play once; null follows the setting for all videos. */
+    val videoEnd: VideoEnd? = null,
 )
 
 /** A part of a picture, as fractions of its width and height. */

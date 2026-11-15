@@ -218,6 +218,9 @@ class Library(private val context: Context) {
         afterPoolChange()
     }
 
+    fun setVideoEnd(item: Item, end: VideoEnd?) =
+        update { d -> d.copy(items = d.items.map { if (it.id == item.id) it.copy(videoEnd = end) else it }) }
+
     fun setCrop(item: Item, crop: Crop?) =
         update { d -> d.copy(items = d.items.map { if (it.id == item.id) it.copy(crop = crop) else it }) }
 
