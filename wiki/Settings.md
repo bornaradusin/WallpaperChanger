@@ -44,7 +44,11 @@ Rain, storms with lightning, snow, fog, clouds, sun by day and stars at night, d
 
 The card also shows the weather now, where, and when it was last checked, or why it couldn't get it. **Check the weather now** fetches it straight away.
 
-**Try an effect** shows rain, a storm, snow, fog, clouds, or sun and stars on your wallpaper whatever the weather, so you can see what each looks like: pick one, go to the home screen, then come back and pick **Live** for the real weather again.
+**Last time your wallpaper was on screen** says what the wallpaper did: showing the real weather, showing the test, or why nothing showed (no weather yet, the phone counted as locked, and so on).
+
+**Test mode**: while it's on, the wallpaper shows the effect you pick (rain, storm, snow, fog, clouds, or sun and stars) whatever the weather, and the settings say so in red. Go to the home screen to see it, then turn Test mode off for the real weather again.
+
+Finding where you are: the phone's last known location, else one quick location from Wi-Fi and mobile masts (never GPS), else an approximate one from your internet connection.
 
 The weather goes by what is actually falling where you are, so a shower shows as rain even when the forecast only calls it cloudy.
 

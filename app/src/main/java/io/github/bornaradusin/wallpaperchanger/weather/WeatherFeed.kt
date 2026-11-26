@@ -66,6 +66,9 @@ object WeatherFeed {
     private val _problem = MutableStateFlow<String?>(null)
     val problem: StateFlow<String?> = _problem.asStateFlow()
 
+    /** What the wallpaper last did with the effects while on screen, for the settings. */
+    val onWallpaper = MutableStateFlow<String?>(null)
+
     /** A sky picked in the settings to see its effect, in place of the real weather; null: the real one. */
     val preview = MutableStateFlow<Sky?>(null)
 

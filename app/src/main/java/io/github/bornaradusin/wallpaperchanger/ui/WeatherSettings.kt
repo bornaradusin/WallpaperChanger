@@ -7,6 +7,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Switch
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.runtime.rememberCoroutineScope
@@ -98,14 +102,28 @@ fun WeatherSettings(screens: WeatherScreens, onChange: (WeatherScreens) -> Unit)
     }
     OutlinedButton({ scope.launch { runCatching { WeatherFeed.refreshIfStale(context.applicationContext, force = true) } } }) { Text("Check the weather now") }
 
-    // See each effect on the wallpaper whatever the weather; goes back to the real weather on Live
-    Text("Try an effect", style = MaterialTheme.typography.bodyLarge)
-    Text("Shows it on your wallpaper now, whatever the weather. Go to the home screen to see it, then come back and pick Live.", style = MaterialTheme.typography.bodySmall)
-    val tries = listOf(null to "Live", Sky.RAIN to "Rain", Sky.THUNDER to "Storm", Sky.SNOW to "Snow", Sky.FOG to "Fog", Sky.CLOUDY to "Clouds", Sky.CLEAR to "Sun / stars")
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        tries.forEach { (sky, label) ->
-            FilterChip(preview == sky, { WeatherFeed.preview.value = sky }, label = { Text(label) })
+    val onWallpaper by WeatherFeed.onWallpaper.collectAsState()
+    Text("Last time your wallpaper was on screen: ${onWallpaper ?: "not seen yet"}", style = MaterialTheme.typography.bodyMedium)
+
+    // Test mode: one effect on the wallpaper whatever the weather, clearly on or off
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Test mode", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (preview == null) "Off: the wallpaper shows the real weather"
+                else "ON: the wallpaper shows the test effect below, not the real weather. Turn off when done.",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (preview == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+            )
         }
+        Switch(preview != null, { on -> WeatherFeed.preview.value = if (on) Sky.RAIN else null })
+    }
+    if (preview != null) {
+        val tries = listOf(Sky.RAIN to "Rain", Sky.THUNDER to "Storm", Sky.SNOW to "Snow", Sky.FOG to "Fog", Sky.CLOUDY to "Clouds", Sky.CLEAR to "Sun / stars")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            tries.forEach { (sky, label) -> FilterChip(preview == sky, { WeatherFeed.preview.value = sky }, label = { Text(label) }) }
+        }
+        Text("Go to the home screen to see it.", style = MaterialTheme.typography.bodySmall)
     }
 
     Text(

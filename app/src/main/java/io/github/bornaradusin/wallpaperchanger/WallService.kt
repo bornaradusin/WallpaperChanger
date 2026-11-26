@@ -182,6 +182,10 @@ class WallService : WallpaperService() {
                     renderer.weather.mix = weatherMix
                     mixAt = now
                 }
+                if (visibleNow && !isPreview) WeatherFeed.onWallpaper.value = whyNot() ?: run {
+                    val p = WeatherFeed.preview.value
+                    if (p != null) "Showing the test: ${p.name.lowercase()}" else "Showing the real weather: ${WeatherFeed.now.value?.sky?.name?.lowercase()}"
+                }
                 if (!effectsWanted()) {
                     if (renderer.effectsOn) {
                         renderer.effectsOn = false
@@ -194,6 +198,20 @@ class WallService : WallpaperService() {
                 renderer.draw()
                 ticking = true
                 gl.postDelayed(this, FRAME_MS)
+            }
+        }
+
+        /** Why the effects aren't showing on screen now, or null if they are. */
+        private fun whyNot(): String? {
+            val onLock = flags.value == Screen.LOCK || locked.value
+            return when {
+                !renderer.ready -> "Not showing: the wallpaper isn't drawn yet"
+                WeatherEffects.failed -> "Not showing: this phone's graphics couldn't build the effects"
+                !weatherMix.any -> if (WeatherFeed.shown() == null) "Not showing: no weather yet" else "Not showing: nothing to draw for this weather"
+                weatherScreens == WeatherScreens.OFF -> "Off"
+                weatherScreens == WeatherScreens.HOME && onLock -> "Not showing: the phone counts as locked (home screen only is set)"
+                weatherScreens == WeatherScreens.LOCK && !onLock -> "Not showing: home screen (lock screen only is set)"
+                else -> null
             }
         }
 
