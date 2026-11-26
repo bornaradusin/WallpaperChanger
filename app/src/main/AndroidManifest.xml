@@ -4,6 +4,7 @@
     <uses-feature android:name="android.software.live_wallpaper" android:required="true" />
 
     <!-- Stays awake for the moment it takes to put up the next one after the screen goes off -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Timed changes and rules carry on after a restart -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

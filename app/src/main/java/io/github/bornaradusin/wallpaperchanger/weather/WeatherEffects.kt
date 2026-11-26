@@ -33,6 +33,9 @@ class WeatherEffects {
 
     var mix = Mix()
 
+    /** Called on the render thread as each lightning strike starts (for the buzz). */
+    var onStrike: (() -> Unit)? = null
+
     private var program = 0
     private val quad: FloatBuffer = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
         .apply { put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)); position(0) }
@@ -75,6 +78,7 @@ class WeatherEffects {
     private fun flash(time: Float): Float {
         if (time >= nextStrike) {
             strikeAt = time
+            onStrike?.invoke()
             nextStrike = time + 7f + random.nextFloat() * 11f
         }
         val t = time - strikeAt
@@ -119,11 +123,11 @@ class WeatherEffects {
             val night = if (day) 0f else 1f
             return when (w.sky) {
                 Sky.CLEAR -> Mix(sun = if (day) 1f else 0f, stars = night, night = night * 0.5f)
-                Sky.PARTLY -> Mix(sun = if (day) 0.6f else 0f, stars = night * 0.5f, cloud = 0.35f, night = night * 0.5f, wind = w.wind)
-                Sky.CLOUDY -> Mix(cloud = 0.75f, fog = 0.1f, night = night * 0.6f, wind = w.wind)
-                Sky.FOG -> Mix(fog = 1f, cloud = 0.3f, night = night * 0.6f, wind = w.wind)
+                Sky.PARTLY -> Mix(sun = if (day) 0.6f else 0f, stars = night * 0.5f, cloud = 0.45f, night = night * 0.5f, wind = w.wind)
+                Sky.CLOUDY -> Mix(cloud = 0.85f, night = night * 0.6f, wind = w.wind)
+                Sky.FOG -> Mix(fog = 1f, cloud = 0.4f, night = night * 0.6f, wind = w.wind)
                 Sky.RAIN -> Mix(rain = w.intensity, drops = w.intensity, cloud = 0.55f, night = night * 0.6f, wind = w.wind)
-                Sky.SNOW -> Mix(snow = w.intensity, cloud = 0.4f, fog = 0.15f, night = night * 0.6f, wind = w.wind)
+                Sky.SNOW -> Mix(snow = w.intensity, cloud = 0.5f, night = night * 0.6f, wind = w.wind)
                 Sky.THUNDER -> Mix(rain = w.intensity, drops = w.intensity, cloud = 0.9f, night = 0.35f + night * 0.4f, storm = true, wind = w.wind)
             }
         }
@@ -155,15 +159,24 @@ class WeatherEffects {
                 return v;
             }
 
-            // Thin falling streaks: one per cell, in columns; the wind leans them
-            float rainLayer(vec2 uv, float scale, float speed, float density) {
+            // Falling streaks: each column falls at its own speed and offset, so nothing lines up;
+            // each streak has its own place, length, thickness and brightness, bright at its head
+            float rainLayer(vec2 uv, float scale, float speed, float density, float seed) {
                 uv.x += uv.y * uWind * 0.35;
-                vec2 p = uv * vec2(scale, scale * 0.3);
-                p.y += uTime * speed;
-                vec2 c = floor(p), f = fract(p);
+                vec2 p = uv * vec2(scale, scale * 0.22);
+                float col = floor(p.x);
+                float hc = hash(vec2(col, seed));
+                p.y += uTime * speed * (0.7 + 0.6 * hc) + hc * 37.0;
+                vec2 c = vec2(col, floor(p.y)) + seed;
+                vec2 f = fract(p);
+                float on = step(hash(c), density);
                 float x = abs(f.x - (0.15 + 0.7 * hash(c + 1.3)));
-                float streak = (1.0 - smoothstep(0.0, 0.07, x)) * smoothstep(0.0, 0.35, f.y) * (1.0 - smoothstep(0.55, 1.0, f.y));
-                return streak * step(hash(c), density);
+                float width = 0.03 + 0.05 * hash(c + 2.9);
+                float len = 0.2 + 0.6 * hash(c + 4.1);
+                float t = (f.y - hash(c + 6.7) * (1.0 - len)) / len;
+                float along = smoothstep(0.0, 0.06, t) * (1.0 - smoothstep(0.25, 1.0, t));
+                float bright = 0.45 + 0.55 * hash(c + 8.8);
+                return on * (1.0 - smoothstep(0.0, width, x)) * along * bright;
             }
 
             // Drops on the glass: they gather, then a few run down and are gone
@@ -208,17 +221,26 @@ class WeatherEffects {
 
                 if (uNight > 0.0) acc = over(acc, vec3(0.02, 0.03, 0.08), 0.22 * uNight);
 
+                // Clouds: soft, lit from above, drifting across the top of the screen with the wind
                 if (uCloud > 0.0) {
-                    float n = fbm(uv * 1.3 + vec2(uTime * 0.01 * (0.4 + uWind), uTime * 0.003));
-                    float shade = smoothstep(0.42, 0.85, n) * uCloud;
-                    acc = over(acc, vec3(0.08, 0.09, 0.12), 0.45 * shade);
+                    float drift = uTime * 0.012 * (0.5 + abs(uWind)) * (uWind < 0.0 ? -1.0 : 1.0);
+                    vec2 q = vec2(uv.x * 0.9 + drift, uv.y * 1.7);
+                    float n = fbm(q * 1.4);
+                    float detail = fbm(q * 3.3 + 5.0);
+                    float shape = smoothstep(0.42, 0.72, n * 0.75 + detail * 0.4);
+                    float high = smoothstep(0.3, 0.9, top);
+                    vec3 lit = mix(vec3(0.95, 0.96, 0.98), vec3(0.32, 0.35, 0.42), uNight);
+                    vec3 col = mix(lit * 0.62, lit, smoothstep(0.35, 0.7, detail));
+                    acc = over(acc, vec3(0.06, 0.07, 0.1), 0.14 * uCloud * high);
+                    acc = over(acc, col, 0.7 * shape * high * uCloud);
                 }
 
+                // Mist: thin wisps drifting low along the bottom, never over the whole picture
                 if (uFog > 0.0) {
-                    float n = fbm(vec2(uv.x * 1.6 + uTime * 0.015, uv.y * 3.0));
-                    float low = 1.0 - smoothstep(0.0, 0.95, top);
-                    float fog = (0.35 + 0.65 * n) * (0.35 + 0.65 * low) * uFog;
-                    acc = over(acc, vec3(0.82, 0.85, 0.9), 0.5 * fog);
+                    float n = fbm(vec2(uv.x * 2.2 + uTime * 0.025, uv.y * 6.0 - uTime * 0.006));
+                    float band = 1.0 - smoothstep(0.0, 0.4, top);
+                    float wisp = smoothstep(0.48, 0.78, n);
+                    acc = over(acc, vec3(0.86, 0.88, 0.91), 0.32 * wisp * band * uFog);
                 }
 
                 if (uSun > 0.0) {
@@ -242,10 +264,11 @@ class WeatherEffects {
                 }
 
                 if (uRain > 0.0) {
-                    float far = rainLayer(uv, 60.0, 2.6, 0.55 * uRain);
-                    float mid = rainLayer(uv + 3.7, 34.0, 3.6, 0.45 * uRain);
-                    float near = rainLayer(uv + 7.1, 18.0, 5.0, 0.3 * uRain);
-                    float a = far * 0.3 + mid * 0.45 + near * 0.6;
+                    float l1 = rainLayer(uv, 75.0, 2.4, 0.5 * uRain, 1.0);
+                    float l2 = rainLayer(uv, 48.0, 3.1, 0.42 * uRain, 17.0);
+                    float l3 = rainLayer(uv, 30.0, 4.0, 0.32 * uRain, 43.0);
+                    float l4 = rainLayer(uv, 17.0, 5.2, 0.2 * uRain, 71.0);
+                    float a = l1 * 0.25 + l2 * 0.35 + l3 * 0.5 + l4 * 0.65;
                     acc = over(acc, vec3(0.85, 0.9, 1.0), clamp(a, 0.0, 0.75));
                 }
 

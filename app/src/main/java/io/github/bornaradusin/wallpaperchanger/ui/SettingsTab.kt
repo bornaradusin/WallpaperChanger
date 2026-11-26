@@ -140,7 +140,7 @@ fun SettingsTab() {
             }
 
             Section("Weather effects") {
-                WeatherSettings(s.weatherEffects) { v -> library.setSettings { it.copy(weatherEffects = v) } }
+                WeatherSettings(s.weatherEffects, { v -> library.setSettings { it.copy(weatherEffects = v) } }, s.weatherHaptics, { on -> library.setSettings { it.copy(weatherHaptics = on) } })
             }
 
             Section("Lock screen") {

@@ -201,6 +201,18 @@ class WallService : WallpaperService() {
             }
         }
 
+        /** Lightning's buzz: a sharp crack, then a softer rumble. Only ever while the storm is on screen. */
+        private fun thunder() {
+            runCatching {
+                val vibrator = getSystemService(android.os.VibratorManager::class.java).defaultVibrator
+                if (!vibrator.hasVibrator()) return
+                val effect = if (vibrator.hasAmplitudeControl())
+                    android.os.VibrationEffect.createWaveform(longArrayOf(0, 35, 70, 90, 60, 160), intArrayOf(0, 255, 0, 140, 0, 70), -1)
+                else android.os.VibrationEffect.createWaveform(longArrayOf(0, 35, 80, 120), -1)
+                vibrator.vibrate(effect)
+            }
+        }
+
         /** Why the effects aren't showing on screen now, or null if they are. */
         private fun whyNot(): String? {
             val onLock = flags.value == Screen.LOCK || locked.value
@@ -280,6 +292,7 @@ class WallService : WallpaperService() {
             // The weather: a new one, or the screen changing (home / lock), starts or stops the effects
             scope.launch { WeatherFeed.now.collect { kick(fresh = true) } }
             scope.launch { WeatherFeed.preview.collect { kick(fresh = true) } }
+            renderer.weather.onStrike = { if (app.library.data.value.settings.weatherHaptics) thunder() }
             scope.launch { locked.collect { kick() } }
             scope.launch { flags.collect { kick() } }
             scope.launch {

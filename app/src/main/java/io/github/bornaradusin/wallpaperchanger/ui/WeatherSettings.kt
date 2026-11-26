@@ -44,7 +44,7 @@ import io.github.bornaradusin.wallpaperchanger.weather.WeatherFeed
  */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun WeatherSettings(screens: WeatherScreens, onChange: (WeatherScreens) -> Unit) {
+fun WeatherSettings(screens: WeatherScreens, onChange: (WeatherScreens) -> Unit, haptics: Boolean, onHaptics: (Boolean) -> Unit) {
     val context = LocalContext.current
     val weather by WeatherFeed.now.collectAsState()
     var located by remember { mutableStateOf(Schedule.hasLocation(context)) }
@@ -101,6 +101,14 @@ fun WeatherSettings(screens: WeatherScreens, onChange: (WeatherScreens) -> Unit)
         Text("Now: $what$where (updated ${if (minutes < 1) "just now" else "$minutes min ago"})", style = MaterialTheme.typography.bodyMedium)
     }
     OutlinedButton({ scope.launch { runCatching { WeatherFeed.refreshIfStale(context.applicationContext, force = true) } } }) { Text("Check the weather now") }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Vibrate with lightning", style = MaterialTheme.typography.bodyLarge)
+            Text("In a storm, a short buzz with each strike while you can see it", style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(haptics, onHaptics)
+    }
 
     val onWallpaper by WeatherFeed.onWallpaper.collectAsState()
     Text("Last time your wallpaper was on screen: ${onWallpaper ?: "not seen yet"}", style = MaterialTheme.typography.bodyMedium)

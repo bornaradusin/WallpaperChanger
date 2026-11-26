@@ -33,7 +33,7 @@ This is the setting for all videos. Each video can have its own: see [[Albums]].
 
 ## Weather effects
 
-Rain, storms with lightning, snow, fog, clouds, sun by day and stars at night, drawn gently over your wallpaper as the weather is where you are. From 1.4.0.
+Rain, storms with lightning, snow, mist, clouds, sun by day and stars at night, drawn gently over your wallpaper as the weather is where you are. From 1.4.0.
 
 | Setting | What it does |
 |---|---|
@@ -43,6 +43,8 @@ Rain, storms with lightning, snow, fog, clouds, sun by day and stars at night, d
 | **Off** | No weather over the wallpaper. |
 
 The card also shows the weather now, where, and when it was last checked, or why it couldn't get it. **Check the weather now** fetches it straight away.
+
+**Vibrate with lightning** (on by default): in a storm, a short buzz with each strike while you can see the wallpaper.
 
 **Last time your wallpaper was on screen** says what the wallpaper did: showing the real weather, showing the test, or why nothing showed (no weather yet, the phone counted as locked, and so on).
 

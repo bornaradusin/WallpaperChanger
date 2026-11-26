@@ -104,6 +104,8 @@ data class Settings(
     val lockOwn: Boolean = false,
     /** Where the weather's rain, snow, fog, clouds, sun and stars show over the wallpaper. */
     val weatherEffects: WeatherScreens = WeatherScreens.BOTH,
+    /** A buzz with each lightning strike in a storm. */
+    val weatherHaptics: Boolean = true,
 )
 
 /** The screens the weather effects show on. */
