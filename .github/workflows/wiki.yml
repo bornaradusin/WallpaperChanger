@@ -54,7 +54,8 @@ jobs:
 
       - name: Made-up pictures and videos
         run: |
-          sudo apt-get install -y -qq ffmpeg > /dev/null || true
+          for i in 1 2 3; do sudo apt-get update -qq > /dev/null && sudo apt-get install -y -qq --fix-missing ffmpeg > /dev/null && break; sleep 15; done
+          command -v ffmpeg
           pip install --quiet pillow
           python3 .github/screenshots/seed.py seed
 

@@ -2,7 +2,13 @@ package io.github.bornaradusin.wallpaperchanger.weather
 
 import android.content.Context
 import io.github.bornaradusin.wallpaperchanger.ui.lastLocation
+import android.location.LocationManager
+import android.os.CancellationSignal
+import io.github.bornaradusin.wallpaperchanger.Schedule
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -96,7 +102,7 @@ object WeatherFeed {
             prefs.edit().putLong("tried", now).apply()
             val where = position(context)
             if (where == null) {
-                _problem.value = "Couldn't tell where you are: no location known and no internet connection"
+                _problem.value = "Couldn't tell where you are ($whereProblem)"
                 return@withLock
             }
             val (lat, lon, place) = where
@@ -109,23 +115,63 @@ object WeatherFeed {
         }
     }
 
-    /** Where the phone is: Android's last known position, else the internet connection's (kept for hours). */
-    private fun position(context: Context): Triple<Double, Double, String>? {
+    /** Why finding the position failed, for the settings' message. */
+    private var whereProblem = ""
+
+    /**
+     * Where the phone is: Android's last known position; else, with location allowed, one quick
+     * network fix (Wi-Fi and mobile masts, no GPS); else the internet connection's (kept for hours).
+     */
+    private suspend fun position(context: Context): Triple<Double, Double, String>? {
+        val problems = mutableListOf<String>()
         lastLocation(context)?.let { (lat, lon) -> return Triple(lat, lon, "") }
+        networkFix(context)?.let { (lat, lon) -> return Triple(lat, lon, "") }
+        if (Schedule.hasLocation(context)) problems += "Android has no location yet"
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (System.currentTimeMillis() - prefs.getLong("ipAt", 0L) < IP_PLACE_MS && prefs.contains("ipLat")) {
             return Triple(prefs.getFloat("ipLat", 0f).toDouble(), prefs.getFloat("ipLon", 0f).toDouble(), prefs.getString("ipPlace", "")!!)
         }
-        return runCatching {
-            val o = get("https://ipwho.is/?fields=success,latitude,longitude,city")
-            if (!o.optBoolean("success")) return null
-            val lat = o.getDouble("latitude")
-            val lon = o.getDouble("longitude")
-            val city = o.optString("city")
-            prefs.edit().putLong("ipAt", System.currentTimeMillis()).putFloat("ipLat", lat.toFloat())
-                .putFloat("ipLon", lon.toFloat()).putString("ipPlace", city).apply()
-            Triple(lat, lon, city)
-        }.getOrNull()
+        // Three free lookups by the internet connection, in turn, in case one is down or busy
+        val lookups = listOf<Pair<String, (JSONObject) -> Triple<Double, Double, String>?>>(
+            "https://ipwho.is/?fields=success,latitude,longitude,city" to { o ->
+                if (o.optBoolean("success")) Triple(o.getDouble("latitude"), o.getDouble("longitude"), o.optString("city")) else null
+            },
+            "https://get.geojs.io/v1/ip/geo.json" to { o ->
+                Triple(o.getString("latitude").toDouble(), o.getString("longitude").toDouble(), o.optString("city"))
+            },
+            "https://ipapi.co/json/" to { o ->
+                if (o.has("latitude")) Triple(o.getDouble("latitude"), o.getDouble("longitude"), o.optString("city")) else null
+            },
+        )
+        for ((url, read) in lookups) {
+            val found = runCatching { read(get(url)) }
+                .onFailure { problems += "${url.substringAfter("://").substringBefore('/')}: ${it.message ?: it.javaClass.simpleName}" }
+                .getOrNull() ?: continue
+            prefs.edit().putLong("ipAt", System.currentTimeMillis()).putFloat("ipLat", found.first.toFloat())
+                .putFloat("ipLon", found.second.toFloat()).putString("ipPlace", found.third).apply()
+            return found
+        }
+        whereProblem = problems.joinToString("; ")
+        return null
+    }
+
+    /** One network position from Android (Wi-Fi and masts, never GPS), waiting at most 10 s. */
+    @android.annotation.SuppressLint("MissingPermission")
+    private suspend fun networkFix(context: Context): Pair<Double, Double>? {
+        if (!Schedule.hasLocation(context)) return null
+        val lm = context.getSystemService(LocationManager::class.java) ?: return null
+        if (!lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) return null
+        return withTimeoutOrNull(10_000L) {
+            suspendCancellableCoroutine { cont ->
+                val cancel = CancellationSignal()
+                cont.invokeOnCancellation { cancel.cancel() }
+                runCatching {
+                    lm.getCurrentLocation(LocationManager.NETWORK_PROVIDER, cancel, context.mainExecutor) { loc ->
+                        if (cont.isActive) cont.resume(loc?.let { it.latitude to it.longitude })
+                    }
+                }.onFailure { if (cont.isActive) cont.resume(null) }
+            }
+        }
     }
 
     private fun fetch(lat: Double, lon: Double, place: String): WeatherNow {
