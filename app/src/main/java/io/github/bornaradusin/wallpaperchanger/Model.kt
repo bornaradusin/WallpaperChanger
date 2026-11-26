@@ -102,7 +102,12 @@ data class Settings(
     val paused: Boolean = false,
     /** The lock screen has its own albums and its own place in the rotation (Android 14 and newer). */
     val lockOwn: Boolean = false,
+    /** Where the weather's rain, snow, fog, clouds, sun and stars show over the wallpaper. */
+    val weatherEffects: WeatherScreens = WeatherScreens.BOTH,
 )
+
+/** The screens the weather effects show on. */
+enum class WeatherScreens { BOTH, HOME, LOCK, OFF }
 
 @Serializable
 data class Data(

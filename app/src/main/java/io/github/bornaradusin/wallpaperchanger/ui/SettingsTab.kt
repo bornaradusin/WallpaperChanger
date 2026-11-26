@@ -139,6 +139,10 @@ fun SettingsTab() {
                 Text("Videos are always muted.", style = MaterialTheme.typography.bodySmall)
             }
 
+            Section("Weather effects") {
+                WeatherSettings(s.weatherEffects) { v -> library.setSettings { it.copy(weatherEffects = v) } }
+            }
+
             Section("Lock screen") {
                 LockScreenSettings(s.lockOwn) { on -> library.setSettings { it.copy(lockOwn = on) } }
             }

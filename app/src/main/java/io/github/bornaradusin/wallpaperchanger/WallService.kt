@@ -26,6 +26,8 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.service.wallpaper.WallpaperService
 import android.view.SurfaceHolder
+import io.github.bornaradusin.wallpaperchanger.weather.WeatherEffects
+import io.github.bornaradusin.wallpaperchanger.weather.WeatherFeed
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -161,6 +163,57 @@ class WallService : WallpaperService() {
         /** Which screen Android put this wallpaper on (only the lock screen when set there on its own). */
         private val flags = MutableStateFlow(Screen.HOME)
 
+        // ---- the weather over the wallpaper ----
+
+        @Volatile private var weatherScreens = WeatherScreens.BOTH
+        /** The layers for the weather now; worked out again each minute, as day turns to night. */
+        private var weatherMix = WeatherEffects.Mix()
+        private var mixAt = 0L
+        private val effectsStart = System.nanoTime()
+        private var ticking = false
+
+        /** About 30 pictures a second while the weather shows, and none at all while it doesn't. */
+        private val tick = object : Runnable {
+            override fun run() {
+                ticking = false
+                val now = System.currentTimeMillis()
+                if (now - mixAt > 60_000L) {
+                    weatherMix = WeatherEffects.mixFor(WeatherFeed.now.value, now)
+                    renderer.weather.mix = weatherMix
+                    mixAt = now
+                }
+                if (!effectsWanted()) {
+                    if (renderer.effectsOn) {
+                        renderer.effectsOn = false
+                        renderer.draw()
+                    }
+                    return
+                }
+                renderer.effectsOn = true
+                renderer.effectTime = (System.nanoTime() - effectsStart) / 1_000_000_000f
+                renderer.draw()
+                ticking = true
+                gl.postDelayed(this, FRAME_MS)
+            }
+        }
+
+        private fun effectsWanted(): Boolean {
+            if (!visibleNow || !renderer.ready || !weatherMix.any) return false
+            val onLock = flags.value == Screen.LOCK || (locked.value && !isPreview)
+            return when (weatherScreens) {
+                WeatherScreens.BOTH -> true
+                WeatherScreens.HOME -> !onLock
+                WeatherScreens.LOCK -> onLock
+                WeatherScreens.OFF -> false
+            }
+        }
+
+        /** Starts the effects if they should be running and aren't; [fresh] works the layers out again. */
+        private fun kick(fresh: Boolean = false) = gl.post {
+            if (fresh) mixAt = 0L
+            if (!ticking) tick.run()
+        }
+
         /**
          * What one slot of the renderer holds. Slot 0 is the home screen's; slot 1 the lock
          * screen's, when the lock screen has its own and both share this one wallpaper.
@@ -206,6 +259,16 @@ class WallService : WallpaperService() {
                     }
                 }.distinctUntilChanged().collect { plan -> gl.post { apply(plan) } }
             }
+            // The weather: a new one, or the screen changing (home / lock), starts or stops the effects
+            scope.launch { WeatherFeed.now.collect { kick(fresh = true) } }
+            scope.launch { locked.collect { kick() } }
+            scope.launch { flags.collect { kick() } }
+            scope.launch {
+                library.data.map { it.settings.weatherEffects }.distinctUntilChanged().collect {
+                    weatherScreens = it
+                    kick()
+                }
+            }
             scope.launch {
                 library.data.map { it.settings }.distinctUntilChanged().collect { s ->
                     gl.post {
@@ -222,6 +285,7 @@ class WallService : WallpaperService() {
         override fun onDestroy() {
             engines.remove(this)
             scope.cancel()
+            gl.removeCallbacks(tick)
             gl.post {
                 slots.forEach { releasePlayer(it) }
                 renderer.stop()
@@ -237,6 +301,7 @@ class WallService : WallpaperService() {
                 slots.forEach { it.shownKey = null; it.loadingKey = null }
                 slots.forEach { load(it) }
             }
+            kick(fresh = true)
         }
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -258,6 +323,9 @@ class WallService : WallpaperService() {
             // The surface has to be let go of before this returns
             val done = CountDownLatch(1)
             gl.post {
+                gl.removeCallbacks(tick)
+                ticking = false
+                renderer.effectsOn = false
                 slots.forEach { releasePlayer(it); it.shownKey = null; it.loadingKey = null }
                 renderer.stop()
                 done.countDown()
@@ -269,6 +337,12 @@ class WallService : WallpaperService() {
         override fun onVisibilityChanged(visible: Boolean) {
             visibleNow = visible
             gl.post { playOnlyActive(restart = visible) }
+            // In view: the effects run, and the weather is fetched if it's older than half an hour.
+            // Out of view, the next frame finds nothing to do and the effects stop.
+            kick()
+            if (visible && weatherScreens != WeatherScreens.OFF) {
+                scope.launch { runCatching { WeatherFeed.refreshIfStale(applicationContext) } }
+            }
         }
 
         override fun onOffsetsChanged(xOffset: Float, yOffset: Float, xStep: Float, yStep: Float, xPixels: Int, yPixels: Int) {
@@ -503,5 +577,7 @@ class WallService : WallpaperService() {
         const val MAX_TEXTURE = 4096
         /** How long Wallpaper Changer waits after the screen goes off before changing. */
         const val CHANGE_DELAY_MS = 1000L
+        /** The weather effects' frame interval: about 30 a second, gentle on the battery. */
+        const val FRAME_MS = 33L
     }
 }

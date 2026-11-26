@@ -61,6 +61,10 @@ class Renderer {
 
     var scaling = Scaling.FILL
     var darken = 0f
+    /** The weather over the wallpaper, drawn when [effectsOn]; [effectTime] in seconds moves it. */
+    val weather = io.github.bornaradusin.wallpaperchanger.weather.WeatherEffects()
+    var effectsOn = false
+    var effectTime = 0f
     /** 0 … 1: where the home screen has been scrolled to (0.5 when it doesn't scroll). */
     var offset = 0.5f
 
@@ -86,6 +90,7 @@ class Renderer {
 
         imageProgram = program(VERTEX, FRAGMENT_IMAGE)
         videoProgram = program(VERTEX, FRAGMENT_VIDEO)
+        weather.start()
         val textures = IntArray(4)
         GLES20.glGenTextures(4, textures, 0)
         slots.forEachIndexed { i, slot ->
@@ -193,6 +198,7 @@ class Renderer {
             Showing.IMAGE -> drawQuad(s, imageProgram, GLES20.GL_TEXTURE_2D, s.imageTexture, video = false, identity)
             Showing.VIDEO -> drawQuad(s, videoProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, s.videoTexture, video = true, s.videoMatrix)
         }
+        if (effectsOn) weather.draw(width, height, effectTime)
         EGL14.eglSwapBuffers(display, surface)
     }
 
