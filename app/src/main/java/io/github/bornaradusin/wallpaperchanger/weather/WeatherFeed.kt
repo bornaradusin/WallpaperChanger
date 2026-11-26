@@ -56,6 +56,20 @@ object WeatherFeed {
     private val _now = MutableStateFlow<WeatherNow?>(null)
     val now: StateFlow<WeatherNow?> = _now.asStateFlow()
 
+    /** Why the last fetch failed, or null once one works: shown in the settings. */
+    private val _problem = MutableStateFlow<String?>(null)
+    val problem: StateFlow<String?> = _problem.asStateFlow()
+
+    /** A sky picked in the settings to see its effect, in place of the real weather; null: the real one. */
+    val preview = MutableStateFlow<Sky?>(null)
+
+    /** What the effects show: the preview while one is picked, else the weather now. */
+    fun shown(now: Long = System.currentTimeMillis()): WeatherNow? = preview.value?.let { sky ->
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val day = sky != Sky.CLEAR || hour in 7..18
+        WeatherNow(sky, if (sky == Sky.THUNDER) 0.9f else 0.75f, 0.8f, 0.3f, day, 0L, 0L, "", now)
+    } ?: _now.value
+
     private val lock = Mutex()
     private var loaded = false
     private val client by lazy {
@@ -68,7 +82,7 @@ object WeatherFeed {
     private const val PREFS = "weather"
 
     /** Loads the kept weather (once), then fetches anew if it's older than [REFRESH_MS]. */
-    suspend fun refreshIfStale(context: Context) = withContext(Dispatchers.IO) {
+    suspend fun refreshIfStale(context: Context, force: Boolean = false) = withContext(Dispatchers.IO) {
         lock.withLock {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             if (!loaded) {
@@ -78,10 +92,18 @@ object WeatherFeed {
             val now = System.currentTimeMillis()
             val last = _now.value?.fetchedAt ?: 0L
             val tried = prefs.getLong("tried", 0L)
-            if (now - last < REFRESH_MS || now - tried < RETRY_MS) return@withLock
+            if (!force && (now - last < REFRESH_MS || now - tried < RETRY_MS)) return@withLock
             prefs.edit().putLong("tried", now).apply()
-            val (lat, lon, place) = position(context) ?: return@withLock
-            val fresh = runCatching { fetch(lat, lon, place) }.getOrNull() ?: return@withLock
+            val where = position(context)
+            if (where == null) {
+                _problem.value = "Couldn't tell where you are: no location known and no internet connection"
+                return@withLock
+            }
+            val (lat, lon, place) = where
+            val fresh = runCatching { fetch(lat, lon, place) }
+                .onFailure { _problem.value = "Couldn't get the weather: ${it.message ?: it.javaClass.simpleName}" }
+                .getOrNull() ?: return@withLock
+            _problem.value = null
             _now.value = fresh
             prefs.edit().putString("now", encode(fresh).toString()).apply()
         }
@@ -110,7 +132,7 @@ object WeatherFeed {
         val url = String.format(
             java.util.Locale.ROOT,
             "https://api.open-meteo.com/v1/forecast?latitude=%.3f&longitude=%.3f" +
-                "&current=weather_code,is_day,cloud_cover,wind_speed_10m,wind_direction_10m" +
+                "&current=weather_code,is_day,cloud_cover,wind_speed_10m,wind_direction_10m,precipitation,rain,showers,snowfall" +
                 "&daily=sunrise,sunset&timeformat=unixtime&timezone=auto&forecast_days=1",
             lat, lon,
         )
@@ -124,7 +146,18 @@ object WeatherFeed {
         val daily = o.optJSONObject("daily")
         val rise = daily?.optJSONArray("sunrise")?.optLong(0) ?: 0L
         val set = daily?.optJSONArray("sunset")?.optLong(0) ?: 0L
-        val (sky, intensity) = skyOf(code)
+        // The code can say only "overcast" while it rains (a light shower between the model's
+        // categories): what is actually falling right now wins.
+        val coded = skyOf(code)
+        val snowCm = cur.optDouble("snowfall", 0.0)                       // cm in the last 15 min
+        val wet = maxOf(cur.optDouble("precipitation", 0.0), cur.optDouble("rain", 0.0) + cur.optDouble("showers", 0.0)) // mm
+        val (sky, intensity) = when {
+            coded.first == Sky.RAIN || coded.first == Sky.SNOW || coded.first == Sky.THUNDER ->
+                coded.first to maxOf(coded.second, if (coded.first == Sky.SNOW) 0f else amount(wet))
+            snowCm > 0.0 -> Sky.SNOW to (0.35f + (snowCm / 1.0).toFloat()).coerceAtMost(1f)
+            wet > 0.0 -> Sky.RAIN to amount(wet)
+            else -> coded
+        }
         return WeatherNow(
             sky = sky,
             intensity = intensity,
@@ -136,6 +169,15 @@ object WeatherFeed {
             place = place,
             fetchedAt = System.currentTimeMillis(),
         )
+    }
+
+    /** How hard it rains from mm in the last 15 minutes (light below 2.5 mm an hour, heavy above 7.6). */
+    private fun amount(mm: Double): Float = when {
+        mm <= 0.0 -> 0.4f
+        mm < 0.15 -> 0.4f
+        mm < 0.6 -> 0.6f
+        mm < 1.9 -> 0.8f
+        else -> 1f
     }
 
     /** WMO weather codes, as Open-Meteo gives them, and how hard it falls. */

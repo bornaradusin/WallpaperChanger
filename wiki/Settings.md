@@ -42,7 +42,11 @@ Rain, storms with lightning, snow, fog, clouds, sun by day and stars at night, d
 | **Lock** | On the lock screen only. |
 | **Off** | No weather over the wallpaper. |
 
-The card also shows the weather now, where, and when it was last checked.
+The card also shows the weather now, where, and when it was last checked, or why it couldn't get it. **Check the weather now** fetches it straight away.
+
+**Try an effect** shows rain, a storm, snow, fog, clouds, or sun and stars on your wallpaper whatever the weather, so you can see what each looks like: pick one, go to the home screen, then come back and pick **Live** for the real weather again.
+
+The weather goes by what is actually falling where you are, so a shower shows as rain even when the forecast only calls it cloudy.
 
 **Battery:** the weather comes from [Open-Meteo](https://open-meteo.com) at most every half hour, and only while the wallpaper is showing. It uses the location the phone already has from other apps and never turns on GPS itself; without location permission it goes by an approximate location from your internet connection. **Use my location** asks for permission, and to follow you while the phone is locked too, set the app's Location to **Allow all the time** (**Open location settings**). The animation stops whenever the wallpaper can't be seen.
 

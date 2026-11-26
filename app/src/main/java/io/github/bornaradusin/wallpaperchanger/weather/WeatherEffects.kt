@@ -88,6 +88,9 @@ class WeatherEffects {
         fun shader(type: Int, code: String) = GLES20.glCreateShader(type).also {
             GLES20.glShaderSource(it, code)
             GLES20.glCompileShader(it)
+            val ok = IntArray(1)
+            GLES20.glGetShaderiv(it, GLES20.GL_COMPILE_STATUS, ok, 0)
+            if (ok[0] == 0) android.util.Log.w("WeatherEffects", "compile: " + GLES20.glGetShaderInfoLog(it))
         }
         return GLES20.glCreateProgram().also {
             GLES20.glAttachShader(it, shader(GLES20.GL_VERTEX_SHADER, vertex))
@@ -98,12 +101,16 @@ class WeatherEffects {
             if (ok[0] == 0) {
                 android.util.Log.w("WeatherEffects", "shader: " + GLES20.glGetProgramInfoLog(it))
                 GLES20.glDeleteProgram(it)
+                failed = true
                 return 0
             }
         }
     }
 
     companion object {
+
+        /** The phone's graphics couldn't build the effects: the settings say so. */
+        @Volatile var failed = false
 
         /** The layers for this weather now: subtle, as a wallpaper effect should be. */
         fun mixFor(w: WeatherNow?, now: Long = System.currentTimeMillis()): Mix {
@@ -155,7 +162,7 @@ class WeatherEffects {
                 p.y += uTime * speed;
                 vec2 c = floor(p), f = fract(p);
                 float x = abs(f.x - (0.15 + 0.7 * hash(c + 1.3)));
-                float streak = smoothstep(0.03, 0.0, x) * smoothstep(0.0, 0.35, f.y) * smoothstep(1.0, 0.55, f.y);
+                float streak = (1.0 - smoothstep(0.0, 0.07, x)) * smoothstep(0.0, 0.35, f.y) * (1.0 - smoothstep(0.55, 1.0, f.y));
                 return streak * step(hash(c), density);
             }
 
@@ -171,9 +178,9 @@ class WeatherEffects {
                 float r = (0.07 + 0.1 * hash(c + 5.0)) * smoothstep(0.0, 0.25, life);
                 vec2 d = (f - o) * vec2(1.0, 0.8);
                 float dist = length(d);
-                float body = smoothstep(r, r * 0.6, dist) * step(0.45, h) * (1.0 - smoothstep(0.85, 1.0, life));
+                float body = (1.0 - smoothstep(r * 0.6, r, dist)) * step(0.45, h) * (1.0 - smoothstep(0.85, 1.0, life));
                 // a bright spot up and to the left, a dark rim below: light through a bead of water
-                float glint = smoothstep(r * 0.45, 0.0, length(d - vec2(-r * 0.3, r * 0.35))) * body;
+                float glint = (1.0 - smoothstep(0.0, r * 0.45, length(d - vec2(-r * 0.3, r * 0.35)))) * body;
                 return vec2(body, glint);
             }
 
@@ -188,7 +195,7 @@ class WeatherEffects {
                 vec2 f = fract(p);
                 vec2 at = vec2(0.2 + 0.6 * hash(c + 1.7), 0.2 + 0.6 * hash(c + 4.3));
                 float s = size * (0.6 + 0.8 * hash(c + 9.1));
-                return smoothstep(s, s * 0.15, length(f - at)) * step(0.3, hash(c));
+                return (1.0 - smoothstep(s * 0.15, s, length(f - at))) * step(0.3, hash(c));
             }
 
             vec4 over(vec4 acc, vec3 col, float a) { return vec4(col * a + acc.rgb * (1.0 - a), a + acc.a * (1.0 - a)); }
@@ -204,14 +211,14 @@ class WeatherEffects {
                 if (uCloud > 0.0) {
                     float n = fbm(uv * 1.3 + vec2(uTime * 0.01 * (0.4 + uWind), uTime * 0.003));
                     float shade = smoothstep(0.42, 0.85, n) * uCloud;
-                    acc = over(acc, vec3(0.08, 0.09, 0.12), 0.32 * shade);
+                    acc = over(acc, vec3(0.08, 0.09, 0.12), 0.45 * shade);
                 }
 
                 if (uFog > 0.0) {
                     float n = fbm(vec2(uv.x * 1.6 + uTime * 0.015, uv.y * 3.0));
                     float low = 1.0 - smoothstep(0.0, 0.95, top);
                     float fog = (0.35 + 0.65 * n) * (0.35 + 0.65 * low) * uFog;
-                    acc = over(acc, vec3(0.82, 0.85, 0.9), 0.38 * fog);
+                    acc = over(acc, vec3(0.82, 0.85, 0.9), 0.5 * fog);
                 }
 
                 if (uSun > 0.0) {
@@ -228,18 +235,18 @@ class WeatherEffects {
                     vec2 p = uv * 60.0;
                     vec2 c = floor(p), f = fract(p);
                     float h = hash(c);
-                    float star = step(0.985, h) * smoothstep(0.08, 0.0, length(f - vec2(hash(c + 2.0), hash(c + 5.0))));
+                    float star = step(0.985, h) * (1.0 - smoothstep(0.0, 0.08, length(f - vec2(hash(c + 2.0), hash(c + 5.0)))));
                     float twinkle = 0.55 + 0.45 * sin(uTime * (1.0 + 2.0 * hash(c + 8.0)) + h * 40.0);
                     float sky = smoothstep(0.35, 0.9, top);
                     acc = over(acc, vec3(1.0), clamp(star * twinkle * sky * uStars, 0.0, 1.0));
                 }
 
                 if (uRain > 0.0) {
-                    float far = rainLayer(uv, 60.0, 2.6, 0.25 * uRain);
-                    float mid = rainLayer(uv + 3.7, 34.0, 3.6, 0.22 * uRain);
-                    float near = rainLayer(uv + 7.1, 18.0, 5.0, 0.14 * uRain);
-                    float a = far * 0.12 + mid * 0.18 + near * 0.26;
-                    acc = over(acc, vec3(0.85, 0.9, 1.0), clamp(a, 0.0, 0.5));
+                    float far = rainLayer(uv, 60.0, 2.6, 0.55 * uRain);
+                    float mid = rainLayer(uv + 3.7, 34.0, 3.6, 0.45 * uRain);
+                    float near = rainLayer(uv + 7.1, 18.0, 5.0, 0.3 * uRain);
+                    float a = far * 0.3 + mid * 0.45 + near * 0.6;
+                    acc = over(acc, vec3(0.85, 0.9, 1.0), clamp(a, 0.0, 0.75));
                 }
 
                 if (uDrops > 0.0) {
@@ -247,8 +254,8 @@ class WeatherEffects {
                     vec2 d2 = dropsLayer(uv + 11.3, 12.0);
                     float body = max(d1.x, d2.x * 0.8) * uDrops;
                     float glint = max(d1.y, d2.y) * uDrops;
-                    acc = over(acc, vec3(0.75, 0.82, 0.9), 0.16 * body);
-                    acc = over(acc, vec3(1.0), 0.45 * glint);
+                    acc = over(acc, vec3(0.75, 0.82, 0.9), 0.3 * body);
+                    acc = over(acc, vec3(1.0), 0.7 * glint);
                 }
 
                 if (uSnow > 0.0) {

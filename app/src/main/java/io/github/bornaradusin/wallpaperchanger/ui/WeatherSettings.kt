@@ -3,7 +3,16 @@ package io.github.bornaradusin.wallpaperchanger.ui
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.unit.dp
+import io.github.bornaradusin.wallpaperchanger.weather.WeatherEffects
+import kotlinx.coroutines.launch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
@@ -29,6 +38,7 @@ import io.github.bornaradusin.wallpaperchanger.weather.WeatherFeed
  * Settings › Weather effects: where the weather shows over the wallpaper, what it is now, and the
  * location it goes by (the phone's last known one, never its own GPS fix, else an approximate one).
  */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun WeatherSettings(screens: WeatherScreens, onChange: (WeatherScreens) -> Unit) {
     val context = LocalContext.current
@@ -66,6 +76,12 @@ fun WeatherSettings(screens: WeatherScreens, onChange: (WeatherScreens) -> Unit)
     )
     if (screens == WeatherScreens.OFF) return
 
+    val problem by WeatherFeed.problem.collectAsState()
+    val preview by WeatherFeed.preview.collectAsState()
+    val scope = rememberCoroutineScope()
+    if (WeatherEffects.failed) Text("This phone's graphics couldn't draw the effects. Please report it on GitHub.", color = MaterialTheme.colorScheme.error)
+    problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+    if (weather == null && problem == null) Text("Getting the weather…", style = MaterialTheme.typography.bodyMedium)
     weather?.let { w ->
         val what = when (w.sky) {
             Sky.CLEAR -> if (w.isDay()) "Clear and sunny" else "Clear night, with stars"
@@ -79,6 +95,17 @@ fun WeatherSettings(screens: WeatherScreens, onChange: (WeatherScreens) -> Unit)
         val minutes = ((System.currentTimeMillis() - w.fetchedAt) / 60_000L).coerceAtLeast(0)
         val where = if (w.place.isNotBlank()) " in ${w.place}" else ""
         Text("Now: $what$where (updated ${if (minutes < 1) "just now" else "$minutes min ago"})", style = MaterialTheme.typography.bodyMedium)
+    }
+    OutlinedButton({ scope.launch { runCatching { WeatherFeed.refreshIfStale(context.applicationContext, force = true) } } }) { Text("Check the weather now") }
+
+    // See each effect on the wallpaper whatever the weather; goes back to the real weather on Live
+    Text("Try an effect", style = MaterialTheme.typography.bodyLarge)
+    Text("Shows it on your wallpaper now, whatever the weather. Go to the home screen to see it, then come back and pick Live.", style = MaterialTheme.typography.bodySmall)
+    val tries = listOf(null to "Live", Sky.RAIN to "Rain", Sky.THUNDER to "Storm", Sky.SNOW to "Snow", Sky.FOG to "Fog", Sky.CLOUDY to "Clouds", Sky.CLEAR to "Sun / stars")
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        tries.forEach { (sky, label) ->
+            FilterChip(preview == sky, { WeatherFeed.preview.value = sky }, label = { Text(label) })
+        }
     }
 
     Text(

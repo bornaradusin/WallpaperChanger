@@ -178,7 +178,7 @@ class WallService : WallpaperService() {
                 ticking = false
                 val now = System.currentTimeMillis()
                 if (now - mixAt > 60_000L) {
-                    weatherMix = WeatherEffects.mixFor(WeatherFeed.now.value, now)
+                    weatherMix = WeatherEffects.mixFor(WeatherFeed.shown(now), now)
                     renderer.weather.mix = weatherMix
                     mixAt = now
                 }
@@ -261,6 +261,7 @@ class WallService : WallpaperService() {
             }
             // The weather: a new one, or the screen changing (home / lock), starts or stops the effects
             scope.launch { WeatherFeed.now.collect { kick(fresh = true) } }
+            scope.launch { WeatherFeed.preview.collect { kick(fresh = true) } }
             scope.launch { locked.collect { kick() } }
             scope.launch { flags.collect { kick() } }
             scope.launch {
