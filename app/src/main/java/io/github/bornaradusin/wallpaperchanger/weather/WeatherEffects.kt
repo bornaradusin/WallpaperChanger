@@ -170,6 +170,32 @@ class WeatherEffects {
                 return fbm6(p + w * 1.3);
             }
 
+            // One layer of clouds in cloud units (1 = a cloud's spacing): how solid it is here (x)
+            // and how lit (y, 1 on top … 0 underneath)
+            vec2 cloudLayer(vec2 p, float seed) {
+                float cell = floor(p.x);
+                float best = 0.0, lit = 1.0;
+                for (int k = -1; k <= 1; k++) {
+                    float cx = cell + float(k);
+                    if (hash(vec2(cx, seed)) < 0.62 - 0.45 * uCloud) continue;   // a gap of sky
+                    vec2 base = vec2(cx + 0.5 + (hash(vec2(cx, seed + 1.0)) - 0.5) * 0.4, (hash(vec2(cx, seed + 2.0)) - 0.5) * 0.12);
+                    float w = 0.3 + 0.3 * hash(vec2(cx, seed + 3.0));
+                    float d = -1.0;
+                    for (int j = 0; j < 6; j++) {
+                        float fj = float(j);
+                        float hx = hash(vec2(cx * 7.0 + fj, seed + 4.0));
+                        float hy = hash(vec2(cx * 3.0 + fj, seed + 5.0));
+                        vec2 c = base + vec2((hx - 0.5) * 2.0 * w, 0.04 + hy * 0.12 * (1.0 - abs(hx - 0.5)));
+                        float r = (0.1 + 0.1 * hash(vec2(cx + fj * 13.0, seed + 6.0))) * (1.15 - abs(hx - 0.5));
+                        d = max(d, 1.0 - length((p - c) * vec2(0.9, 1.1)) / r);
+                    }
+                    d = min(d, (p.y - base.y) * 9.0);                                  // a flat base
+                    d += (fbm(p * 5.0 + vec2(uTime * 0.03, seed)) - 0.5) * 0.7;        // wispy edges
+                    if (d > best) { best = d; lit = smoothstep(0.0, 0.3, p.y - base.y); }
+                }
+                return vec2(smoothstep(0.0, 0.3, best), lit);
+            }
+
             // Falling streaks: each column falls at its own speed and offset, so nothing lines up;
             // each streak has its own place, length, thickness and brightness, bright at its head
             float rainLayer(vec2 uv, float scale, float speed, float density, float seed) {
@@ -232,21 +258,18 @@ class WeatherEffects {
 
                 if (uNight > 0.0) acc = over(acc, vec3(0.02, 0.03, 0.08), 0.22 * uNight);
 
-                // Clouds: billowing masses in the upper sky, domain-warped so they curl and change
-                // shape as they drift; lit on top, shadowed underneath, solid in their cores
+                // Clouds: real cloud shapes, each a cluster of round puffs with a flat base and
+                // wispy edges, bright on top and grey underneath; small far ones high up drifting
+                // slowly, big near ones lower and faster, with gaps of sky between them
                 if (uCloud > 0.0) {
-                    float high = smoothstep(0.22, 0.7, top);
-                    float drift = uTime * 0.014 * (0.5 + abs(uWind)) * (uWind < 0.0 ? -1.0 : 1.0);
-                    vec2 p = vec2(uv.x * 1.1 + drift, uv.y * 2.0);
-                    float d = cloudDensity(p);
-                    float dl = cloudDensity(p + vec2(0.0, 0.07));
-                    float cover = mix(0.6, 0.4, uCloud);
-                    float dens = smoothstep(cover, cover + 0.22, d);
-                    float lit = clamp(0.6 + (d - dl) * 5.0, 0.3, 1.0);
-                    vec3 bright = mix(vec3(1.0, 1.0, 1.0), vec3(0.42, 0.45, 0.53), uNight);
-                    vec3 col = mix(bright * vec3(0.5, 0.52, 0.58), bright, lit);
-                    acc = over(acc, vec3(0.05, 0.06, 0.09), 0.22 * uCloud * high);
-                    acc = over(acc, col, 0.93 * dens * high);
+                    float drift = uTime * 0.02 * (0.4 + abs(uWind)) * (uWind < 0.0 ? -1.0 : 1.0);
+                    vec2 far = cloudLayer(vec2((uv.x + drift * 0.5) * 2.4 + 11.0, (uv.y - 0.9) * 2.4), 3.0);
+                    vec2 near = cloudLayer(vec2((uv.x + drift) * 1.35, (uv.y - 0.74) * 1.35), 9.0);
+                    vec3 white = mix(vec3(0.98, 0.98, 1.0), vec3(0.4, 0.43, 0.5), uNight);
+                    vec3 belly = white * vec3(0.6, 0.63, 0.7);
+                    acc = over(acc, vec3(0.05, 0.06, 0.09), 0.2 * uCloud * smoothstep(0.4, 1.0, top));
+                    acc = over(acc, mix(belly, white, far.y) * 0.92, 0.85 * far.x);
+                    acc = over(acc, mix(belly, white, near.y), 0.95 * near.x);
                 }
 
                 // Fog: low banks rolling sideways along the ground, thick in places and thin in
