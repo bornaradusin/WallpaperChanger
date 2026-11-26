@@ -190,7 +190,7 @@ class WeatherEffects {
                         d = max(d, 1.0 - length((p - c) * vec2(0.9, 1.1)) / r);
                     }
                     d = min(d, (p.y - base.y) * 9.0);                                  // a flat base
-                    d += (fbm(p * 5.0 + vec2(uTime * 0.03, seed)) - 0.5) * 0.7;        // wispy edges
+                    d += (fbm(p * 5.0 + vec2(uTime * 0.09, seed)) - 0.5) * 0.7;        // wispy edges
                     if (d > best) { best = d; lit = smoothstep(0.0, 0.3, p.y - base.y); }
                 }
                 return vec2(smoothstep(0.0, 0.3, best), lit);
@@ -262,7 +262,7 @@ class WeatherEffects {
                 // wispy edges, bright on top and grey underneath; small far ones high up drifting
                 // slowly, big near ones lower and faster, with gaps of sky between them
                 if (uCloud > 0.0) {
-                    float drift = uTime * 0.02 * (0.4 + abs(uWind)) * (uWind < 0.0 ? -1.0 : 1.0);
+                    float drift = uTime * 0.06 * (0.5 + abs(uWind)) * (uWind < 0.0 ? -1.0 : 1.0);
                     vec2 far = cloudLayer(vec2((uv.x + drift * 0.5) * 2.4 + 11.0, (uv.y - 0.9) * 2.4), 3.0);
                     vec2 near = cloudLayer(vec2((uv.x + drift) * 1.35, (uv.y - 0.74) * 1.35), 9.0);
                     vec3 white = mix(vec3(0.98, 0.98, 1.0), vec3(0.4, 0.43, 0.5), uNight);
@@ -276,8 +276,8 @@ class WeatherEffects {
                 // others, with a light haze close to the ground; the top of the picture stays clear
                 if (uFog > 0.0) {
                     float low = 1.0 - smoothstep(0.05, 0.62, top);
-                    float n1 = fbm6(vec2(uv.x * 1.2 + uTime * 0.03, uv.y * 3.2));
-                    float n2 = fbm(vec2(uv.x * 2.6 - uTime * 0.045, uv.y * 5.5 + 2.0));
+                    float n1 = fbm6(vec2(uv.x * 1.2 + uTime * 0.055, uv.y * 3.2));
+                    float n2 = fbm(vec2(uv.x * 2.6 - uTime * 0.08, uv.y * 5.5 + 2.0));
                     float bank = smoothstep(0.38, 0.72, n1 * 0.7 + n2 * 0.45);
                     float a = (0.16 + 0.62 * bank) * low * uFog;
                     acc = over(acc, mix(vec3(0.84, 0.86, 0.89), vec3(0.3, 0.32, 0.36), uNight), clamp(a, 0.0, 0.78));
