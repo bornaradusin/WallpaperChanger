@@ -124,8 +124,8 @@ class WeatherEffects {
             return when (w.sky) {
                 Sky.CLEAR -> Mix(sun = if (day) 1f else 0f, stars = night, night = night * 0.5f)
                 Sky.PARTLY -> Mix(sun = if (day) 0.6f else 0f, stars = night * 0.5f, cloud = 0.45f, night = night * 0.5f, wind = w.wind)
-                Sky.CLOUDY -> Mix(cloud = 0.85f, night = night * 0.6f, wind = w.wind)
-                Sky.FOG -> Mix(fog = 1f, cloud = 0.4f, night = night * 0.6f, wind = w.wind)
+                Sky.CLOUDY -> Mix(cloud = 1f, night = night * 0.6f, wind = w.wind)
+                Sky.FOG -> Mix(fog = 1f, night = night * 0.6f, wind = w.wind)
                 Sky.RAIN -> Mix(rain = w.intensity, drops = w.intensity, cloud = 0.55f, night = night * 0.6f, wind = w.wind)
                 Sky.SNOW -> Mix(snow = w.intensity, cloud = 0.5f, night = night * 0.6f, wind = w.wind)
                 Sky.THUNDER -> Mix(rain = w.intensity, drops = w.intensity, cloud = 0.9f, night = 0.35f + night * 0.4f, storm = true, wind = w.wind)
@@ -157,6 +157,17 @@ class WeatherEffects {
                 float v = 0.0, a = 0.5;
                 for (int i = 0; i < 4; i++) { v += a * noise(p); p *= 2.03; a *= 0.5; }
                 return v;
+            }
+
+            float fbm6(vec2 p) {
+                float v = 0.0, a = 0.5;
+                for (int i = 0; i < 6; i++) { v += a * noise(p); p = p * 2.02 + vec2(1.7, 9.2); a *= 0.5; }
+                return v;
+            }
+            // Cloud density: fbm whose coordinates are pushed about by more fbm, for billows
+            float cloudDensity(vec2 p) {
+                vec2 w = vec2(fbm(p * 0.8 + vec2(uTime * 0.01, 0.0)), fbm(p * 0.8 + vec2(3.3, -uTime * 0.008)));
+                return fbm6(p + w * 1.3);
             }
 
             // Falling streaks: each column falls at its own speed and offset, so nothing lines up;
@@ -221,26 +232,32 @@ class WeatherEffects {
 
                 if (uNight > 0.0) acc = over(acc, vec3(0.02, 0.03, 0.08), 0.22 * uNight);
 
-                // Clouds: soft, lit from above, drifting across the top of the screen with the wind
+                // Clouds: billowing masses in the upper sky, domain-warped so they curl and change
+                // shape as they drift; lit on top, shadowed underneath, solid in their cores
                 if (uCloud > 0.0) {
-                    float drift = uTime * 0.012 * (0.5 + abs(uWind)) * (uWind < 0.0 ? -1.0 : 1.0);
-                    vec2 q = vec2(uv.x * 0.9 + drift, uv.y * 1.7);
-                    float n = fbm(q * 1.4);
-                    float detail = fbm(q * 3.3 + 5.0);
-                    float shape = smoothstep(0.42, 0.72, n * 0.75 + detail * 0.4);
-                    float high = smoothstep(0.3, 0.9, top);
-                    vec3 lit = mix(vec3(0.95, 0.96, 0.98), vec3(0.32, 0.35, 0.42), uNight);
-                    vec3 col = mix(lit * 0.62, lit, smoothstep(0.35, 0.7, detail));
-                    acc = over(acc, vec3(0.06, 0.07, 0.1), 0.14 * uCloud * high);
-                    acc = over(acc, col, 0.7 * shape * high * uCloud);
+                    float high = smoothstep(0.22, 0.7, top);
+                    float drift = uTime * 0.014 * (0.5 + abs(uWind)) * (uWind < 0.0 ? -1.0 : 1.0);
+                    vec2 p = vec2(uv.x * 1.1 + drift, uv.y * 2.0);
+                    float d = cloudDensity(p);
+                    float dl = cloudDensity(p + vec2(0.0, 0.07));
+                    float cover = mix(0.6, 0.4, uCloud);
+                    float dens = smoothstep(cover, cover + 0.22, d);
+                    float lit = clamp(0.6 + (d - dl) * 5.0, 0.3, 1.0);
+                    vec3 bright = mix(vec3(1.0, 1.0, 1.0), vec3(0.42, 0.45, 0.53), uNight);
+                    vec3 col = mix(bright * vec3(0.5, 0.52, 0.58), bright, lit);
+                    acc = over(acc, vec3(0.05, 0.06, 0.09), 0.22 * uCloud * high);
+                    acc = over(acc, col, 0.93 * dens * high);
                 }
 
-                // Mist: thin wisps drifting low along the bottom, never over the whole picture
+                // Fog: low banks rolling sideways along the ground, thick in places and thin in
+                // others, with a light haze close to the ground; the top of the picture stays clear
                 if (uFog > 0.0) {
-                    float n = fbm(vec2(uv.x * 2.2 + uTime * 0.025, uv.y * 6.0 - uTime * 0.006));
-                    float band = 1.0 - smoothstep(0.0, 0.4, top);
-                    float wisp = smoothstep(0.48, 0.78, n);
-                    acc = over(acc, vec3(0.86, 0.88, 0.91), 0.32 * wisp * band * uFog);
+                    float low = 1.0 - smoothstep(0.05, 0.62, top);
+                    float n1 = fbm6(vec2(uv.x * 1.2 + uTime * 0.03, uv.y * 3.2));
+                    float n2 = fbm(vec2(uv.x * 2.6 - uTime * 0.045, uv.y * 5.5 + 2.0));
+                    float bank = smoothstep(0.38, 0.72, n1 * 0.7 + n2 * 0.45);
+                    float a = (0.16 + 0.62 * bank) * low * uFog;
+                    acc = over(acc, mix(vec3(0.84, 0.86, 0.89), vec3(0.3, 0.32, 0.36), uNight), clamp(a, 0.0, 0.78));
                 }
 
                 if (uSun > 0.0) {
